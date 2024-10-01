@@ -1,6 +1,10 @@
 import websocket
 import json
 import threading
+import re
+
+# Define a regex pattern for basic SQL injection detection
+sql_injection_pattern = re.compile(r"('|\"|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE)
 
 def on_message(ws, message):
     # This function will be called whenever a log is received from the WebSocket
@@ -8,17 +12,34 @@ def on_message(ws, message):
     process_log(log_entry)  # Function to process each log
 
 def on_error(ws, error):
-    print(f"WebSocket error: {error}\n\n")
+    print(f"WebSocket error IDS: {error}\n\n")
 
 def on_close(ws):
-    print("WebSocket connection closed\n\n")
+    print("WebSocket connection closed IDS\n\n")
 
 def on_open(ws):
-    print("WebSocket connection opened\n\n")
+    print("WebSocket connection opened IDS\n\n")
 
 def process_log(log_entry):
-    # Log processing logic (basic for now, extend with IDS logic later)
-    print(f"Processing log: {log_entry}\n\n")
+    # Check if this is a REQUEST log with a body to inspect
+    if log_entry.get("type") == "REQUEST" and "body" in log_entry:
+        try:
+            body_data = json.loads(log_entry["body"])  # Parse body as JSON
+        except json.JSONDecodeError:
+            print(f"Failed to parse body as JSON IDS: {log_entry['body']}\n")
+            return
+
+        # Extract fields that may contain SQL injection, like username and password
+        username = body_data.get("username", "")
+        password = body_data.get("password", "")
+
+        # Check if either the username or password contains a SQL injection pattern
+        if sql_injection_pattern.search(username) or sql_injection_pattern.search(password):
+            print(f"SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}")
+        else:
+            print(f"No SQL Injection detected in log from {log_entry['ip']}\n")
+    else:
+        print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
 
 def main():
     # URL of the WebSocket server (log parser app)
