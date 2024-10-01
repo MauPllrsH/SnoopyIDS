@@ -2,6 +2,7 @@ import websocket
 import json
 import threading
 import re
+import time
 
 # Define a regex pattern for basic SQL injection detection
 sql_injection_pattern = re.compile(r"('|\"|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE)
@@ -40,22 +41,28 @@ def process_log(log_entry):
             print(f"No SQL Injection detected in log from {log_entry['ip']}\n")
     else:
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
-
-def main():
-    # URL of the WebSocket server (log parser app)
+        
+def run_websocket_client():
     websocket_url = "ws://packet_logger:5000/socket.io/"
 
-    # Initialize the WebSocket client
-    ws = websocket.WebSocketApp(websocket_url,
-                                on_message=on_message,
-                                on_error=on_error,
-                                on_close=on_close)
+    while True:
+        try:
+            # Initialize the WebSocket client
+            ws = websocket.WebSocketApp(websocket_url,
+                                        on_message=on_message,
+                                        on_error=on_error,
+                                        on_close=on_close)
 
-    # Assign on_open to handle the connection
-    ws.on_open = on_open
+            # Assign on_open to handle the connection
+            ws.on_open = on_open
 
-    # Run the WebSocket client in a thread so it doesn't block the main app
-    threading.Thread(target=ws.run_forever).start()
+            # Run the WebSocket client and block until it closes
+            ws.run_forever()
+
+        except Exception as e:
+            print(f"Failed to connect to WebSocket: {e}")
+            print("Retrying connection in 5 seconds...")
+            time.sleep(5)  # Wait 5 seconds before retrying
 
 if __name__ == "__main__":
-    main()
+    run_websocket_client()
