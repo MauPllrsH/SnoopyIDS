@@ -43,7 +43,7 @@ def process_log(log_entry):
 
 def main():
     # URL of the WebSocket server (log parser app)
-    websocket_url = "ws://localhost:5000/socket.io/"  # Adjust the port and URL as needed
+    websocket_url = "ws://packet_logger:5000/socket.io/"
 
     # Initialize the WebSocket client
     ws = websocket.WebSocketApp(websocket_url,
