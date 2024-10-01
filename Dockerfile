@@ -9,4 +9,6 @@ COPY . .
 
 RUN mkdir -p /app/utils
 
+EXPOSE 1111
+
 CMD ["python", "app.py"]
