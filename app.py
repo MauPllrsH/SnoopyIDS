@@ -43,7 +43,7 @@ def process_log(log_entry):
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
         
 def run_websocket_client():
-    websocket_url = "ws://packet_logger:5000/socket.io/"
+    websocket_url = "ws://packet_logger:5000/"
 
     while True:
         try:
