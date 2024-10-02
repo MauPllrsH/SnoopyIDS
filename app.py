@@ -37,11 +37,11 @@ def process_log(log_entry):
 
         # Check if either the username or password contains a SQL injection pattern
         if sql_injection_pattern.search(username) or sql_injection_pattern.search(password):
-            print(f"SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}")
+            print(f"SQL Injection detected in log from {log_entry}")
         else:
-            print(f"No SQL Injection detected in log from {log_entry['ip']}\n")
+            print(f"No SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}\n")
     else:
-        print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
+        print(f"Non-REQUEST log or no body to inspect: {log_entry['timestamp']}\n")
         
 def run_websocket_client():
     tries = 0
