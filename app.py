@@ -30,7 +30,7 @@ def catch_all(event, data):
 
 @sio.on('log')
 def on_message(message):
-    print(f"Received log message: {message}\n")
+    # print(f"Received log message: {message}\n")
     try:
         log_entry = json.loads(message)
         process_log(log_entry)
@@ -38,7 +38,7 @@ def on_message(message):
         print(f"Failed to parse message as JSON: {message}\n")
 
 def process_log(log_entry):
-    print(f"Processing log entry: {log_entry}\n")
+    # print(f"Processing log entry: {log_entry}\n")
     if log_entry.get("type") == "REQUEST" and log_entry.get("body"):
         try:
             body_data = json.loads(log_entry["body"])
@@ -53,14 +53,20 @@ def process_log(log_entry):
         # Check against all SQL injection patterns
         for pattern in sql_injection_patterns:
             if pattern.search(username) or pattern.search(password):
-                print(f"SQL Injection detected in log: {log_entry}")
+                print(f"""SQL Injection detected!
+                        Time: {log_entry['timestamp']}
+                        IP: {log_entry['ip']}
+                        Path: {log_entry['path']}
+                        Method: {log_entry['method']}
+                        Body: {log_entry['body']}
+""")
                 injection_detected = True
                 break
 
         if not injection_detected:
             print(f"No SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}\n")
     else:
-        print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
+        print(f"Non-REQUEST log or no body to inspect at time: {log_entry['timestamp']}\n")
 
 def run_websocket_client():
     tries = 0
