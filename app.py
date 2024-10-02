@@ -43,7 +43,7 @@ def process_log(log_entry):
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
         
 def run_websocket_client():
-    websocket_url = "ws://127.0.0.1:5000/ws"
+    websocket_url = "ws://packet_logger:5000/socket.io"
     tries = 0
     while tries < 5:
         try:
