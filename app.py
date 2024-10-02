@@ -1,25 +1,26 @@
-import websocket
+import socketio
 import json
-import threading
 import re
 import time
 
 # Define a regex pattern for basic SQL injection detection
 sql_injection_pattern = re.compile(r"('|\"|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE)
 
-def on_message(ws, message):
-    # This function will be called whenever a log is received from the WebSocket
-    log_entry = json.loads(message)
-    process_log(log_entry)  # Function to process each log
+sio = socketio.Client()
 
-def on_error(ws, error):
-    print(f"WebSocket error IDS: {error}\n\n")
+@sio.event
+def connect():
+    print("WebSocket connection opened IDS\n\n")
 
-def on_close(ws):
+@sio.event
+def disconnect():
     print("WebSocket connection closed IDS\n\n")
 
-def on_open(ws):
-    print("WebSocket connection opened IDS\n\n")
+@sio.on('log')
+def on_message(message):
+    log_entry = json.loads(message)
+    process_log(log_entry)
+
 
 def process_log(log_entry):
     # Check if this is a REQUEST log with a body to inspect
@@ -43,26 +44,15 @@ def process_log(log_entry):
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
         
 def run_websocket_client():
-    websocket_url = "ws://packet_logger:5000/socket.io/?EIO=3&transport=websocket"
     tries = 0
     while tries < 5:
         try:
-            # Initialize the WebSocket client
-            ws = websocket.WebSocketApp(websocket_url,
-                                        on_message=on_message,
-                                        on_error=on_error,
-                                        on_close=on_close)
-
-            # Assign on_open to handle the connection
-            ws.on_open = on_open
-
-            # Run the WebSocket client and block until it closes
-            ws.run_forever()
-
+            sio.connect('http://packet_logger:5000')
+            sio.wait()
         except Exception as e:
             print(f"Failed to connect to WebSocket: {e}")
             print("Retrying connection in 5 seconds...")
-            time.sleep(5)  # Wait 5 seconds before retrying
+            time.sleep(5)
         tries += 1
 
 if __name__ == "__main__":
