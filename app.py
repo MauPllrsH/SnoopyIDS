@@ -24,7 +24,7 @@ def on_message(message):
 
 def process_log(log_entry):
     # Check if this is a REQUEST log with a body to inspect
-    if log_entry.get("type") == "REQUEST" and "body" in log_entry:
+    if log_entry.get("type") == "REQUEST" and log_entry.get("body"):
         try:
             body_data = json.loads(log_entry["body"])  # Parse body as JSON
         except json.JSONDecodeError:
