@@ -3,8 +3,11 @@ import json
 import re
 import time
 
-# Define a regex pattern for basic SQL injection detection
-sql_injection_pattern = re.compile(r"('|\"|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE)
+# Define regex patterns for SQL injection detection
+sql_injection_patterns = [
+    re.compile(r"('|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE),  # Existing pattern
+    re.compile(r"'\s*OR\s*'1'\s*=\s*'1", re.IGNORECASE)  # Pattern for ' OR '1'='1
+]
 
 sio = socketio.Client()
 
@@ -23,26 +26,29 @@ def on_message(message):
 
 
 def process_log(log_entry):
-    # Check if this is a REQUEST log with a body to inspect
     if log_entry.get("type") == "REQUEST" and log_entry.get("body"):
         try:
-            body_data = json.loads(log_entry["body"])  # Parse body as JSON
+            body_data = json.loads(log_entry["body"])
         except json.JSONDecodeError:
             print(f"Failed to parse body as JSON IDS: {log_entry['body']}\n")
             return
 
-        # Extract fields that may contain SQL injection, like username and password
         username = body_data.get("username", "")
         password = body_data.get("password", "")
 
-        # Check if either the username or password contains a SQL injection pattern
-        if sql_injection_pattern.search(username) or sql_injection_pattern.search(password):
-            print(f"SQL Injection detected in log from {log_entry}")
-        else:
-            print(f"No SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}\n")
+        injection_detected = False
+        # Check against all SQL injection patterns
+        for pattern in sql_injection_patterns:
+            if pattern.search(username) or pattern.search(password):
+                print(f"SQL Injection detected in log: {log_entry}")
+                injection_detected = True
+                break
+
+        if not injection_detected:
+            print(f"No SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}\n") 
     else:
         print(f"Non-REQUEST log or no body to inspect: {log_entry['timestamp']}\n")
-        
+
 def run_websocket_client():
     tries = 0
     while tries < 5:
