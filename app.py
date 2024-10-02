@@ -43,9 +43,9 @@ def process_log(log_entry):
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
         
 def run_websocket_client():
-    websocket_url = "ws://packet_logger:5000/"
-
-    while True:
+    websocket_url = "ws://packet_logger:5000/ws"
+    tries = 0
+    while tries < 5:
         try:
             # Initialize the WebSocket client
             ws = websocket.WebSocketApp(websocket_url,
@@ -63,6 +63,7 @@ def run_websocket_client():
             print(f"Failed to connect to WebSocket: {e}")
             print("Retrying connection in 5 seconds...")
             time.sleep(5)  # Wait 5 seconds before retrying
+        tries += 1
 
 if __name__ == "__main__":
     run_websocket_client()
