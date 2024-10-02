@@ -43,7 +43,7 @@ def process_log(log_entry):
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
         
 def run_websocket_client():
-    websocket_url = "ws://packet_logger:5000/socket.io"
+    websocket_url = "ws://packet_logger:5000/socket.io/?EIO=3&transport=websocket"
     tries = 0
     while tries < 5:
         try:
@@ -66,4 +66,6 @@ def run_websocket_client():
         tries += 1
 
 if __name__ == "__main__":
+    print("Waiting for Packet Logger to start...")
+    time.sleep(10)  # Wait for 10 seconds
     run_websocket_client()
