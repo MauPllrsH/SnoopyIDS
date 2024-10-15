@@ -5,7 +5,7 @@ import time
 from model.RuleEngine import RuleEngine
 
 sio = socketio.Client(logger=True, engineio_logger=True)
-rule_engine = RuleEngine()
+rule_engine = RuleEngine('mongodb://localhost:27017', 'ids_database', 'rules')
 
 
 @sio.event
@@ -73,8 +73,8 @@ def run_websocket_client():
 
 
 if __name__ == "__main__":
-    print("Loading rules...")
-    rule_engine.load_rules('rules.txt')
+    print("Loading rules from MongoDB...")
+    rule_engine.load_rules()
     print("Waiting for Packet Logger to start...")
     time.sleep(10)  # Wait for 10 seconds
     run_websocket_client()

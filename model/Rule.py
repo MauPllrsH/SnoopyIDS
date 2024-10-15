@@ -2,7 +2,8 @@ import re
 
 
 class Rule:
-    def __init__(self, name, pattern, field):
+    def __init__(self, id, name, pattern, field):
+        self.id = id
         self.name = name
         self.pattern = re.compile(pattern, re.IGNORECASE)
         self.field = field
