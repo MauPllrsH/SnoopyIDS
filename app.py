@@ -1,32 +1,33 @@
 import socketio
 import json
-import re
 import time
 
-# Define regex patterns for SQL injection detection
-sql_injection_patterns = [
-    re.compile(r"('|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE),  # Existing pattern
-    re.compile(r"'\s*OR\s*'1'\s*=\s*'1", re.IGNORECASE)  # Pattern for ' OR '1'='1
-]
+from model.RuleEngine import RuleEngine
 
 sio = socketio.Client(logger=True, engineio_logger=True)
+rule_engine = RuleEngine()
+
 
 @sio.event
 def connect():
     print("WebSocket connection opened IDS\n\n")
 
+
 @sio.event
 def connect_error(data):
     print(f"Connection error: {data}\n\n")
+
 
 @sio.event
 def disconnect():
     print("WebSocket connection closed IDS\n\n")
 
+
 @sio.on('*')
 def catch_all(event, data):
     print(f"Caught event: {event}")
     print(f"Data: {data}\n")
+
 
 @sio.on('log')
 def on_message(message):
@@ -37,6 +38,7 @@ def on_message(message):
     except json.JSONDecodeError:
         print(f"Failed to parse message as JSON: {message}\n")
 
+
 def process_log(log_entry):
     print(f"Processing log entry: {log_entry}\n")
     if log_entry.get("type") == "REQUEST" and log_entry.get("body"):
@@ -46,21 +48,15 @@ def process_log(log_entry):
             print(f"Failed to parse body as JSON IDS: {log_entry['body']}\n")
             return
 
-        username = body_data.get("username", "")
-        password = body_data.get("password", "")
-
-        injection_detected = False
-        # Check against all SQL injection patterns
-        for pattern in sql_injection_patterns:
-            if pattern.search(username) or pattern.search(password):
-                print(f"SQL Injection detected in log: {log_entry}")
-                injection_detected = True
-                break
-
-        if not injection_detected:
-            print(f"No SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}\n")
+        # Check against all rules
+        matched_rule = rule_engine.check_rules(body_data)
+        if matched_rule:
+            print(f"Rule '{matched_rule}' matched in log: {log_entry}")
+        else:
+            print(f"No rules matched in log from {log_entry['ip']} on path {log_entry['path']}\n")
     else:
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
+
 
 def run_websocket_client():
     tries = 0
@@ -73,9 +69,12 @@ def run_websocket_client():
             print(f"Failed to connect to WebSocket: {e}")
             print("Retrying connection in 5 seconds...")
             time.sleep(5)
-        tries += 1
+            tries += 1
+
 
 if __name__ == "__main__":
+    print("Loading rules...")
+    rule_engine.load_rules('rules.txt')
     print("Waiting for Packet Logger to start...")
     time.sleep(10)  # Wait for 10 seconds
     run_websocket_client()
