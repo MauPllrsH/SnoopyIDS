@@ -1,2 +1,4 @@
 python-socketio[client]
 pymongo~=4.10.1
+joblib~=1.4.2
+scikit-learn~=1.5.2

@@ -53,7 +53,18 @@ def process_log(log_entry):
         if matched_rule:
             print(f"Rule '{matched_rule}' matched in log: {log_entry}")
         else:
-            print(f"No rules matched in log from {log_entry['ip']} on path {log_entry['path']}\n")
+            # If no rule matched, use ML model to predict anomaly
+            try:
+                is_anomaly = rule_engine.predict_anomaly(body_data)
+                if is_anomaly:
+                    print(f"ML model detected an anomaly in log: {log_entry}")
+                    new_rule_name = rule_engine.generate_rule_from_anomaly(body_data)
+                    if new_rule_name:
+                        print(f"Generated new rule: {new_rule_name}")
+                else:
+                    print(f"No anomaly detected in log from {log_entry['ip']} on path {log_entry['path']}\n")
+            except Exception as e:
+                print(f"Error in ML prediction: {e}")
     else:
         print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
 
@@ -75,6 +86,8 @@ def run_websocket_client():
 if __name__ == "__main__":
     print("Loading rules from MongoDB...")
     rule_engine.load_rules()
+    print("Loading ML model...")
+    rule_engine.load_ml_model('path/to/your/model.joblib', 'path/to/your/vectorizer.joblib')
     print("Waiting for Packet Logger to start...")
     time.sleep(10)  # Wait for 10 seconds
     run_websocket_client()

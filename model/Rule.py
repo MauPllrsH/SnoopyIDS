@@ -10,5 +10,5 @@ class Rule:
 
     def check(self, data):
         if self.field in data:
-            return self.pattern.search(data[self.field])
+            return self.pattern.search(str(data[self.field]))
         return False
