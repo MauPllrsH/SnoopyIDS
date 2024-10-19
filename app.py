@@ -1,81 +1,69 @@
-import socketio
+import grpc
+from concurrent import futures
+import ids_pb2
+import ids_pb2_grpc
 import json
 import re
 import time
 
 # Define regex patterns for SQL injection detection
 sql_injection_patterns = [
-    re.compile(r"('|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE),  # Existing pattern
-    re.compile(r"'\s*OR\s*'1'\s*=\s*'1", re.IGNORECASE)  # Pattern for ' OR '1'='1
+    re.compile(r"('|\b)OR\s+1\s*=\s*1\b", re.IGNORECASE),
+    re.compile(r"'\s*OR\s*'1'\s*=\s*'1", re.IGNORECASE)
 ]
 
-sio = socketio.Client(logger=True, engineio_logger=True)
-
-@sio.event
-def connect():
-    print("WebSocket connection opened IDS\n\n")
-
-@sio.event
-def connect_error(data):
-    print(f"Connection error: {data}\n\n")
-
-@sio.event
-def disconnect():
-    print("WebSocket connection closed IDS\n\n")
-
-@sio.on('*')
-def catch_all(event, data):
-    print(f"Caught event: {event}")
-    print(f"Data: {data}\n")
-
-@sio.on('log')
-def on_message(message):
-    print(f"Received log message: {message}\n")
-    try:
-        log_entry = json.loads(message)
-        process_log(log_entry)
-    except json.JSONDecodeError:
-        print(f"Failed to parse message as JSON: {message}\n")
-
-def process_log(log_entry):
-    print(f"Processing log entry: {log_entry}\n")
-    if log_entry.get("type") == "REQUEST" and log_entry.get("body"):
-        try:
-            body_data = json.loads(log_entry["body"])
-        except json.JSONDecodeError:
-            print(f"Failed to parse body as JSON IDS: {log_entry['body']}\n")
-            return
-
-        username = body_data.get("username", "")
-        password = body_data.get("password", "")
-
+class IDSServicer(ids_pb2_grpc.IDSServicer):
+    def ProcessLog(self, request, context):
+        print(f"Processing log entry: {request}")
+        
         injection_detected = False
-        # Check against all SQL injection patterns
-        for pattern in sql_injection_patterns:
-            if pattern.search(username) or pattern.search(password):
-                print(f"SQL Injection detected in log: {log_entry}")
-                injection_detected = True
-                break
+        message = ""
 
-        if not injection_detected:
-            print(f"No SQL Injection detected in log from {log_entry['ip']} on path {log_entry['path']}\n")
-    else:
-        print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
+        if request.type == "REQUEST" and request.body:
+            try:
+                body_data = json.loads(request.body)
+                username = body_data.get("username", "")
+                password = body_data.get("password", "")
 
-def run_websocket_client():
-    tries = 0
-    while tries < 5:
-        try:
-            print(f"Attempting to connect to WebSocket (attempt {tries + 1})...")
-            sio.connect('http://packet_logger:5000', transports=['websocket'])
-            sio.wait()
-        except Exception as e:
-            print(f"Failed to connect to WebSocket: {e}")
-            print("Retrying connection in 5 seconds...")
-            time.sleep(5)
-        tries += 1
+                # Check against all SQL injection patterns
+                for pattern in sql_injection_patterns:
+                    if pattern.search(username) or pattern.search(password):
+                        injection_detected = True
+                        message = f"SQL Injection detected in log from {request.ip} on path {request.path}"
+                        print(message)
+                        break
+
+                if not injection_detected:
+                    message = f"No SQL Injection detected in log from {request.ip} on path {request.path}"
+                    print(message)
+            except json.JSONDecodeError:
+                message = f"Failed to parse body as JSON: {request.body}"
+                print(message)
+        else:
+            message = f"Non-REQUEST log or no body to inspect: {request}"
+            print(message)
+
+        return ids_pb2.ProcessResult(injection_detected=injection_detected, message=message)
+
+def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
+    
+    with open('./ssl/ids_server.key', 'rb') as f:
+        private_key = f.read()
+    with open('./ssl/ids_server.crt', 'rb') as f:
+        certificate_chain = f.read()
+    
+    server_credentials = grpc.ssl_server_credentials(
+        ((private_key, certificate_chain),),
+        root_certificates=open('ca.crt', 'rb').read(),
+        require_client_auth=True
+    )
+    
+    server.add_secure_port('[::]:50051', server_credentials)
+    server.start()
+    print("IDS Server started on port 50051 (SSL/TLS enabled with client authentication)")
+    server.wait_for_termination()
 
 if __name__ == "__main__":
-    print("Waiting for Packet Logger to start...")
-    time.sleep(10)  # Wait for 10 seconds
-    run_websocket_client()
+    serve()

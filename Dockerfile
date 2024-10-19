@@ -6,9 +6,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY ssl/ca.crt ssl/ids_server.key ssl/ids_server.crt ./
 
-RUN mkdir -p /app/utils
-
-EXPOSE 1111
+EXPOSE 50051
 
 CMD ["python", "app.py"]
