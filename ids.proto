@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package ids;
+
+service IDS {
+  rpc ProcessLog (LogEntry) returns (ProcessResult) {}
+}
+
+message LogEntry {
+  string timestamp = 1;
+  string type = 2;
+  string ip = 3;
+  string method = 4;
+  string path = 5;
+  map<string, string> headers = 6;
+  string body = 7;
+}
+
+message ProcessResult {
+  bool injection_detected = 1;
+  string message = 2;
+}
