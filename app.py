@@ -1,93 +1,127 @@
-import socketio
-import json
+# app.py (IDS Server)
+import grpc
+from concurrent import futures
 import time
-
+import json
 from utils.RuleEngine import RuleEngine
+import ids_pb2
+import ids_pb2_grpc
 
-sio = socketio.Client(logger=True, engineio_logger=True)
-rule_engine = RuleEngine('mongodb://localhost:27017', 'ids_database', 'rules')
+class IDSServicer(ids_pb2_grpc.IDSServicer):
+    def __init__(self):
+        self.rule_engine = RuleEngine('mongodb://localhost:27017', 'ids_database', 'rules')
+        print("Loading rules from MongoDB...")
+        self.rule_engine.load_rules()
+        print("Loading ML model...")
+        self.rule_engine.load_ml_model('path/to/your/model.joblib', 'path/to/your/vectorizer.joblib')
 
+    def ProcessLog(self, request, context):
+        print(f"Received log from client {request.client_id}")
+        print(f"Processing log entry: {request}\n")
 
-@sio.event
-def connect():
-    print("WebSocket connection opened IDS\n\n")
-
-
-@sio.event
-def connect_error(data):
-    print(f"Connection error: {data}\n\n")
-
-
-@sio.event
-def disconnect():
-    print("WebSocket connection closed IDS\n\n")
-
-
-@sio.on('*')
-def catch_all(event, data):
-    print(f"Caught event: {event}")
-    print(f"Data: {data}\n")
-
-
-@sio.on('log')
-def on_message(message):
-    print(f"Received log message: {message}\n")
-    try:
-        log_entry = json.loads(message)
-        process_log(log_entry)
-    except json.JSONDecodeError:
-        print(f"Failed to parse message as JSON: {message}\n")
-
-
-def process_log(log_entry):
-    print(f"Processing log entry: {log_entry}\n")
-    if log_entry.get("type") == "REQUEST" and log_entry.get("body"):
-        try:
-            body_data = json.loads(log_entry["body"])
-        except json.JSONDecodeError:
-            print(f"Failed to parse body as JSON IDS: {log_entry['body']}\n")
-            return
-
-        # Check against all rules
-        matched_rule = rule_engine.check_rules(body_data)
-        if matched_rule:
-            print(f"Rule '{matched_rule}' matched in log: {log_entry}")
-        else:
-            # If no rule matched, use ML model to predict anomaly
+        matched_rules = []
+        if request.type == "REQUEST" and request.body:
             try:
-                is_anomaly = rule_engine.predict_anomaly(body_data)
-                if is_anomaly:
-                    print(f"ML model detected an anomaly in log: {log_entry}")
-                    new_rule_name = rule_engine.generate_rule_from_anomaly(body_data)
-                    if new_rule_name:
-                        print(f"Generated new rule: {new_rule_name}")
-                else:
-                    print(f"No anomaly detected in log from {log_entry['ip']} on path {log_entry['path']}\n")
-            except Exception as e:
-                print(f"Error in ML prediction: {e}")
-    else:
-        print(f"Non-REQUEST log or no body to inspect: {log_entry}\n")
+                body_data = json.loads(request.body)
+                
+                # Check against all rules
+                matched_rule = self.rule_engine.check_rules(body_data)
+                if matched_rule:
+                    matched_rules.append(matched_rule)
+                    message = f"Rule '{matched_rule}' matched"
+                    print(f"{message} in log from {request.ip}")
+                    return ids_pb2.ProcessResult(
+                        injection_detected=True,
+                        message=message,
+                        matched_rules=matched_rules
+                    )
+                
+                # If no rule matched, use ML model
+                try:
+                    is_anomaly = self.rule_engine.predict_anomaly(body_data)
+                    if is_anomaly:
+                        print(f"ML model detected an anomaly in log from {request.ip}")
+                        new_rule_name = self.rule_engine.generate_rule_from_anomaly(body_data)
+                        if new_rule_name:
+                            matched_rules.append(new_rule_name)
+                            message = f"ML model detected anomaly. Generated rule: {new_rule_name}"
+                        else:
+                            message = "ML model detected anomaly"
+                        return ids_pb2.ProcessResult(
+                            injection_detected=True,
+                            message=message,
+                            matched_rules=matched_rules
+                        )
+                    else:
+                        message = f"No anomaly detected in log from {request.ip} on path {request.path}"
+                        print(message)
+                        return ids_pb2.ProcessResult(
+                            injection_detected=False,
+                            message=message,
+                            matched_rules=[]
+                        )
+                except Exception as e:
+                    error_message = f"Error in ML prediction: {e}"
+                    print(error_message)
+                    return ids_pb2.ProcessResult(
+                        injection_detected=False,
+                        message=error_message,
+                        matched_rules=[]
+                    )
+                    
+            except json.JSONDecodeError:
+                error_message = f"Failed to parse body as JSON: {request.body}"
+                print(error_message)
+                return ids_pb2.ProcessResult(
+                    injection_detected=False,
+                    message=error_message,
+                    matched_rules=[]
+                )
+        else:
+            message = "Non-REQUEST log or no body to inspect"
+            print(message)
+            return ids_pb2.ProcessResult(
+                injection_detected=False,
+                message=message,
+                matched_rules=[]
+            )
 
+    def HealthCheck(self, request, context):
+        print(f"Health check from client {request.client_id}")
+        return ids_pb2.HealthCheckResponse(is_healthy=True)
 
-def run_websocket_client():
-    tries = 0
-    while tries < 5:
-        try:
-            print(f"Attempting to connect to WebSocket (attempt {tries + 1})...")
-            sio.connect('http://packet_logger:5000', transports=['websocket'])
-            sio.wait()
-        except Exception as e:
-            print(f"Failed to connect to WebSocket: {e}")
-            print("Retrying connection in 5 seconds...")
-            time.sleep(5)
-            tries += 1
+def serve():
+    # Load SSL/TLS certificates
+    with open('../certs/server.key', 'rb') as f:
+        private_key = f.read()
+    with open('../certs/server.crt', 'rb') as f:
+        certificate_chain = f.read()
+    with open('../certs/ca.crt', 'rb') as f:
+        root_certificates = f.read()
 
+    # Create server credentials
+    server_credentials = grpc.ssl_server_credentials(
+        [(private_key, certificate_chain)],
+        root_certificates=root_certificates,
+        require_client_auth=True
+    )
 
-if __name__ == "__main__":
-    print("Loading rules from MongoDB...")
-    rule_engine.load_rules()
-    print("Loading ML model...")
-    rule_engine.load_ml_model('path/to/your/model.joblib', 'path/to/your/vectorizer.joblib')
-    print("Waiting for Packet Logger to start...")
-    time.sleep(10)  # Wait for 10 seconds
-    run_websocket_client()
+    # Create gRPC server
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
+    
+    # Add secure port
+    server.add_secure_port('[::]:50051', server_credentials)
+    
+    print("Starting IDS gRPC server on port 50051...")
+    server.start()
+    
+    try:
+        while True:
+            server.wait_for_termination()  # Sleep for 24 hours
+    except KeyboardInterrupt:
+        print("Shutting down IDS server...")
+        server.stop(0)
+
+if __name__ == '__main__':
+    serve()
