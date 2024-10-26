@@ -2,8 +2,8 @@ import json
 import re
 
 import joblib
-from bson import ObjectId
 from pymongo import MongoClient
+from pymongo.bson import ObjectId
 
 from utils.Rule import Rule
 

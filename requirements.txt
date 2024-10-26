@@ -3,4 +3,3 @@ grpcio-tools==1.67.0
 protobuf==5.27.2
 joblib
 pymongo==4.6.1
-bson==0.5.10
