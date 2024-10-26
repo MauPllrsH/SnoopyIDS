@@ -92,11 +92,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
 
 def serve():
     # Load SSL/TLS certificates
-    with open('../certs/server.key', 'rb') as f:
+    with open('certs/server.key', 'rb') as f:
         private_key = f.read()
-    with open('../certs/server.crt', 'rb') as f:
+    with open('certs/server.crt', 'rb') as f:
         certificate_chain = f.read()
-    with open('../certs/ca.crt', 'rb') as f:
+    with open('certs/ca.crt', 'rb') as f:
         root_certificates = f.read()
 
     # Create server credentials
