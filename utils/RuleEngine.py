@@ -3,7 +3,7 @@ import re
 
 import joblib
 from pymongo import MongoClient
-from pymongo.bson import ObjectId
+from bson.objectid import ObjectId
 
 from utils.Rule import Rule
 
