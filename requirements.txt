@@ -7,3 +7,4 @@ python-dotenv==1.0.0
 scikit-learn
 pandas
 numpy
+xgboost
