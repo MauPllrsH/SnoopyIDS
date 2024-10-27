@@ -59,10 +59,10 @@ class RuleEngine:
     def load_ml_model(self, model_path, vectorizer_path, preprocessor_path=None, label_encoder_path=None):
         self.ml_model = joblib.load(model_path)
         self.vectorizer = joblib.load(vectorizer_path)
-        if preprocessor_path:
-            self.preprocessor = joblib.load(preprocessor_path)
-        if label_encoder_path:
-            self.label_encoder = joblib.load(label_encoder_path)
+        # if preprocessor_path:
+        #     self.preprocessor = joblib.load(preprocessor_path)
+        # if label_encoder_path:
+        #     self.label_encoder = joblib.load(label_encoder_path)
 
     def predict_anomaly(self, data):
         if self.ml_model is None or self.vectorizer is None:

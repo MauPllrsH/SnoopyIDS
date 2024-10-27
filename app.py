@@ -32,9 +32,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         print("Loading ML model...")
         self.rule_engine.load_ml_model(
             model_path='models/ensemble_model.joblib',
-            vectorizer_path='models/vectorizer.joblib',
-            preprocessor_path='models/preprocessor.joblib',
-            label_encoder_path='models/label_encoder.joblib'
+            vectorizer_path='models/vectorizer.joblib'
         )
 
     def ProcessLog(self, request, context):
