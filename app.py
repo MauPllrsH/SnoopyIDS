@@ -1,5 +1,7 @@
 # app.py (IDS Server)
 import grpc
+import os
+from dotenv import load_dotenv
 from concurrent import futures
 import time
 import json
@@ -7,13 +9,30 @@ from utils.RuleEngine import RuleEngine
 import ids_pb2
 import ids_pb2_grpc
 
+load_dotenv()
+
 class IDSServicer(ids_pb2_grpc.IDSServicer):
     def __init__(self):
-        self.rule_engine = RuleEngine('mongodb://localhost:27017', 'ids_database', 'rules')
+        
+        # Get MongoDB connection details from environment variables
+        mongo_user = os.getenv('MONGO_USER')
+        mongo__url_encoded_password = os.getenv('MONGO_URL_ENCODED_PASSWORD')
+        mongo_port = os.getenv('MONGO_PORT')
+        mongo_database = os.getenv('MONGO_DATABASE')
+        
+        # Construct MongoDB connection URL
+        mongo_url = f"mongodb://{mongo_user}:{mongo__url_encoded_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
+
+        self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
         print("Loading rules from MongoDB...")
         self.rule_engine.load_rules()
         print("Loading ML model...")
-        self.rule_engine.load_ml_model('path/to/your/model.joblib', 'path/to/your/vectorizer.joblib')
+        self.rule_engine.load_ml_model(
+            model_path='models/ensemble_model.joblib',
+            vectorizer_path='models/vectorizer.joblib',
+            preprocessor_path='models/preprocessor.joblib',
+            label_encoder_path='models/label_encoder.joblib'
+        )
 
     def ProcessLog(self, request, context):
         print(f"Received log from client {request.client_id}")
