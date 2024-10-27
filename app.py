@@ -8,6 +8,7 @@ import json
 from utils.RuleEngine import RuleEngine
 import ids_pb2
 import ids_pb2_grpc
+from urllib.parse import quote_plus
 
 load_dotenv()
 
@@ -16,7 +17,9 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         
         # Get MongoDB connection details from environment variables
         mongo_user = os.getenv('MONGO_USER')
+        mongo_user = quote_plus(mongo_user)
         mongo_password = os.getenv('MONGO_PASSWORD')
+        mongo_password = quote_plus(mongo_password)
         mongo_port = os.getenv('MONGO_PORT')
         mongo_database = os.getenv('MONGO_DATABASE')
         
