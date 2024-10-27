@@ -16,12 +16,12 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         
         # Get MongoDB connection details from environment variables
         mongo_user = os.getenv('MONGO_USER')
-        mongo__url_encoded_password = os.getenv('MONGO_URL_ENCODED_PASSWORD')
+        mongo_password = os.getenv('MONGO_PASSWORD')
         mongo_port = os.getenv('MONGO_PORT')
         mongo_database = os.getenv('MONGO_DATABASE')
         
         # Construct MongoDB connection URL
-        mongo_url = f"mongodb://{mongo_user}:{mongo__url_encoded_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
+        mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
 
         self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
         print("Loading rules from MongoDB...")
