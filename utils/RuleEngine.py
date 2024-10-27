@@ -16,6 +16,8 @@ class RuleEngine:
         self.rules = []
         self.ml_model = None
         self.vectorizer = None
+        self.preprocessor = None
+        self.label_encoder = None
 
     def load_rules(self):
         self.rules = []
@@ -54,9 +56,13 @@ class RuleEngine:
         self.collection.delete_one({'_id': ObjectId(rule_id)})
         self.load_rules()  # Reload rules after deleting
 
-    def load_ml_model(self, model_path, vectorizer_path):
+    def load_ml_model(self, model_path, vectorizer_path, preprocessor_path=None, label_encoder_path=None):
         self.ml_model = joblib.load(model_path)
         self.vectorizer = joblib.load(vectorizer_path)
+        if preprocessor_path:
+            self.preprocessor = joblib.load(preprocessor_path)
+        if label_encoder_path:
+            self.label_encoder = joblib.load(label_encoder_path)
 
     def predict_anomaly(self, data):
         if self.ml_model is None or self.vectorizer is None:
