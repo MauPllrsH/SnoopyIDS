@@ -131,7 +131,7 @@ def serve():
     ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
     
     # Add secure port
-    server.add_secure_port('[::]:50051', server_credentials)
+    server.add_secure_port('0.0.0.0:50051', server_credentials)
     
     print("Starting IDS gRPC server on port 50051...")
     server.start()
