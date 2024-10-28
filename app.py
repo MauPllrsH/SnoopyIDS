@@ -9,8 +9,19 @@ from utils.RuleEngine import RuleEngine
 import ids_pb2
 import ids_pb2_grpc
 from urllib.parse import quote_plus
+import logging
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Print to console
+        logging.FileHandler('/app/ids_server.log')  # Save to file
+    ]
+)
+logger = logging.getLogger('ids_server')
 
 class IDSServicer(ids_pb2_grpc.IDSServicer):
     def __init__(self):
