@@ -10,7 +10,7 @@ import ids_pb2
 import ids_pb2_grpc
 from urllib.parse import quote_plus
 import logging
-import datetime
+from datetime import datetime
 
 load_dotenv()
 
