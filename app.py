@@ -10,6 +10,7 @@ import ids_pb2
 import ids_pb2_grpc
 from urllib.parse import quote_plus
 import logging
+import datetime
 
 load_dotenv()
 
@@ -35,31 +36,32 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         mongo_database = os.getenv('MONGO_DATABASE')
         
         # Construct MongoDB connection URL
+        logger.info(f"Connecting to MongoDB at port {mongo_port}")
         mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
 
         self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
-        print("Loading rules from MongoDB...")
+        logger.info("Loading rules from MongoDB...")
         self.rule_engine.load_rules()
-        print("Loading ML model...")
+        logger.info("Rules loaded successfully")
+        logger.info("Loading ML model...")
         self.rule_engine.load_ml_model(
             model_path='models/ensemble_model.joblib',
             vectorizer_path='models/vectorizer.joblib'
         )
+        logger.info("ML model loaded successfully")
 
     def ProcessLog(self, request, context):
-        print("\n=== Received Log Entry for Processing ===")
-        print(f"Time Received: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"From Client: {request.client_id}")
-        print(f"Log Details:")
-        print(f"  - Timestamp: {request.timestamp}")
-        print(f"  - Client IP: {request.ip}")
-        print(f"  - Method: {request.method}")
-        print(f"  - Path: {request.path}")
-        print(f"  - Request Type: {request.type}")
+        start_time = time.time()
+        logger.info("\n" + "="*50)
+        logger.info(f"Received log from client {request.client_id}")
+        logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Client IP: {request.ip}")
+        logger.info(f"Method: {request.method}")
+        logger.info(f"Path: {request.path}")
 
         matched_rules = []
         if request.type == "REQUEST" and request.body:
-            print("\nProcessing request body...")
+            logger.info("Processing REQUEST with body")
             try:
                 body_data = json.loads(request.body)
                 
@@ -78,14 +80,15 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 
                 # If no rule matched, use ML model
                 try:
-                    print("\nRunning ML analysis...")
+                    logger.info("Running ML analysis...")
                     is_anomaly = self.rule_engine.predict_anomaly(body_data)
                     if is_anomaly:
-                        print("ML model detected an anomaly")
+                        logger.warning("ML model detected an anomaly")
                         new_rule_name = self.rule_engine.generate_rule_from_anomaly(body_data)
                         if new_rule_name:
                             matched_rules.append(new_rule_name)
                             message = f"🤖 ML model detected anomaly. Generated rule: {new_rule_name}"
+                            logger.warning(f"Generated new rule: {new_rule_name}")
                         else:
                             message = "🤖 ML model detected anomaly"
                         print(message)
@@ -96,7 +99,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         )
                     else:
                         message = f"✅ No anomalies detected for request from {request.ip} to {request.path}"
-                        print(message)
+                        logger.info("ML analysis complete: No anomalies detected")
                         return ids_pb2.ProcessResult(
                             injection_detected=False,
                             message=message,
@@ -104,7 +107,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         )
                 except Exception as e:
                     error_message = f"❌ Error in ML prediction: {e}"
-                    print(error_message)
+                    logger.error(f"ML prediction error: {str(e)}")
                     return ids_pb2.ProcessResult(
                         injection_detected=False,
                         message=error_message,
@@ -112,16 +115,16 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     )
                     
             except json.JSONDecodeError:
+                logger.error(f"JSON parsing error: {str(e)}")
                 error_message = f"❌ Failed to parse body as JSON: {request.body[:100]}..."
-                print(error_message)
                 return ids_pb2.ProcessResult(
                     injection_detected=False,
                     message=error_message,
                     matched_rules=[]
                 )
         else:
+            logger.info("Non-REQUEST log or no body to inspect")
             message = "ℹ️  Non-REQUEST log or no body to inspect"
-            print(message)
             return ids_pb2.ProcessResult(
                 injection_detected=False,
                 message=message,
@@ -140,6 +143,8 @@ def serve():
         certificate_chain = f.read()
     with open('certs/ca.crt', 'rb') as f:
         root_certificates = f.read()
+    
+    logger.info("SSL certificates loaded successfully")
 
     # Create server credentials
     server_credentials = grpc.ssl_server_credentials(
@@ -147,6 +152,8 @@ def serve():
         root_certificates=root_certificates,
         require_client_auth=True
     )
+
+    logger.info("Server credentials created")
 
     server_options = [
         ('grpc.max_send_message_length', 1024 * 1024 * 100),
@@ -167,16 +174,18 @@ def serve():
     ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
     
     # Add secure port
-    server.add_secure_port('0.0.0.0:50051', server_credentials)
+    server_address = '0.0.0.0:50051'
+    server.add_secure_port(server_address, server_credentials)
     
-    print("Starting IDS gRPC server on port 50051...")
+    logger.info(f"Starting IDS gRPC server on {server_address}")
     server.start()
+    logger.info("Server started successfully")
     
     try:
         while True:
             server.wait_for_termination()  # Sleep for 24 hours
     except KeyboardInterrupt:
-        print("Shutting down IDS server...")
+        logger.info("Shutting down IDS server...")
         server.stop(0)
 
 if __name__ == '__main__':
