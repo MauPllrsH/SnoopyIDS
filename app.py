@@ -36,11 +36,19 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         )
 
     def ProcessLog(self, request, context):
-        print(f"Received log from client {request.client_id}")
-        print(f"Processing log entry: {request}\n")
+        print("\n=== Received Log Entry for Processing ===")
+        print(f"Time Received: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"From Client: {request.client_id}")
+        print(f"Log Details:")
+        print(f"  - Timestamp: {request.timestamp}")
+        print(f"  - Client IP: {request.ip}")
+        print(f"  - Method: {request.method}")
+        print(f"  - Path: {request.path}")
+        print(f"  - Request Type: {request.type}")
 
         matched_rules = []
         if request.type == "REQUEST" and request.body:
+            print("\nProcessing request body...")
             try:
                 body_data = json.loads(request.body)
                 
@@ -48,8 +56,9 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 matched_rule = self.rule_engine.check_rules(body_data)
                 if matched_rule:
                     matched_rules.append(matched_rule)
-                    message = f"Rule '{matched_rule}' matched"
-                    print(f"{message} in log from {request.ip}")
+                    message = f"⚠️  Rule '{matched_rule}' matched"
+                    print(f"\n{message}")
+                    print(f"Matched payload: {request.body}")
                     return ids_pb2.ProcessResult(
                         injection_detected=True,
                         message=message,
@@ -58,22 +67,24 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 
                 # If no rule matched, use ML model
                 try:
+                    print("\nRunning ML analysis...")
                     is_anomaly = self.rule_engine.predict_anomaly(body_data)
                     if is_anomaly:
-                        print(f"ML model detected an anomaly in log from {request.ip}")
+                        print("ML model detected an anomaly")
                         new_rule_name = self.rule_engine.generate_rule_from_anomaly(body_data)
                         if new_rule_name:
                             matched_rules.append(new_rule_name)
-                            message = f"ML model detected anomaly. Generated rule: {new_rule_name}"
+                            message = f"🤖 ML model detected anomaly. Generated rule: {new_rule_name}"
                         else:
-                            message = "ML model detected anomaly"
+                            message = "🤖 ML model detected anomaly"
+                        print(message)
                         return ids_pb2.ProcessResult(
                             injection_detected=True,
                             message=message,
                             matched_rules=matched_rules
                         )
                     else:
-                        message = f"No anomaly detected in log from {request.ip} on path {request.path}"
+                        message = f"✅ No anomalies detected for request from {request.ip} to {request.path}"
                         print(message)
                         return ids_pb2.ProcessResult(
                             injection_detected=False,
@@ -81,7 +92,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                             matched_rules=[]
                         )
                 except Exception as e:
-                    error_message = f"Error in ML prediction: {e}"
+                    error_message = f"❌ Error in ML prediction: {e}"
                     print(error_message)
                     return ids_pb2.ProcessResult(
                         injection_detected=False,
@@ -90,7 +101,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     )
                     
             except json.JSONDecodeError:
-                error_message = f"Failed to parse body as JSON: {request.body}"
+                error_message = f"❌ Failed to parse body as JSON: {request.body[:100]}..."
                 print(error_message)
                 return ids_pb2.ProcessResult(
                     injection_detected=False,
@@ -98,7 +109,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     matched_rules=[]
                 )
         else:
-            message = "Non-REQUEST log or no body to inspect"
+            message = "ℹ️  Non-REQUEST log or no body to inspect"
             print(message)
             return ids_pb2.ProcessResult(
                 injection_detected=False,
