@@ -59,12 +59,14 @@ class RuleEngine:
         self.load_rules()
 
     def load_ml_model(self, model_path, vectorizer_path, preprocessor_path=None, label_encoder_path=None):
-        self.ml_model = joblib.load(model_path)
+        model_info = joblib.load(model_path)
+        self.ml_model = model_info['model']
+        self.n_features = model_info['n_features']
+        self.feature_names = model_info['feature_names']
         self.vectorizer = joblib.load(vectorizer_path)
         if preprocessor_path:
+            print("Method values in training:", self.preprocessor.named_transformers_['cat'].categories_)
             self.preprocessor = joblib.load(preprocessor_path)
-        if label_encoder_path:
-            self.label_encoder = joblib.load(label_encoder_path)
 
     def extract_features(self, data):
         # Convert single request to DataFrame
@@ -97,8 +99,9 @@ class RuleEngine:
             X = self.extract_features(data)
             print("Feature columns:", X.columns.tolist())
 
-            # Transform path using TF-IDF
-            path_features = self.vectorizer.transform([data['path']])
+            # Get path features
+            path = data['path'] if data['path'] else ''
+            path_features = self.vectorizer.transform([path])
             print("Path features shape:", path_features.shape)
 
             # Split features into categorical and numerical
@@ -106,21 +109,32 @@ class RuleEngine:
             numerical_columns = [col for col in X.columns if col not in categorical_columns]
 
             if self.preprocessor:
-                # Apply preprocessing exactly like in training
+                # Get preprocessed features in same order as training
                 X_preprocessed = self.preprocessor.transform(X)
+                print("Preprocessed shape:", X_preprocessed.shape)
 
-                # Convert sparse matrices to dense if needed
+                # Convert to dense if needed
                 if issparse(X_preprocessed):
                     X_preprocessed = X_preprocessed.toarray()
                 if issparse(path_features):
                     path_features = path_features.toarray()
 
-                # Combine features in same order as training
+                # Combine features
                 X_combined = np.hstack((X_preprocessed, path_features))
-                print("Combined features shape:", X_combined.shape)
+                print("Combined shape:", X_combined.shape)
 
-                # Actually make the prediction!
+                if X_combined.shape[1] != 60:  # Expected number of features from training
+                    print(f"WARNING: Feature mismatch. Got {X_combined.shape[1]} features, expected 60")
+                    # Pad or trim to match expected size
+                    if X_combined.shape[1] > 60:
+                        X_combined = X_combined[:, :60]
+                    else:
+                        padding = np.zeros((X_combined.shape[0], 60 - X_combined.shape[1]))
+                        X_combined = np.hstack((X_combined, padding))
+
+                # Make prediction
                 prediction = self.ml_model.predict(X_combined)
+                print("Prediction:", bool(prediction[0]))
                 return bool(prediction[0])
             else:
                 raise ValueError("Preprocessor not loaded")

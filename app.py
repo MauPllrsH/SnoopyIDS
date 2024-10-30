@@ -1,3 +1,5 @@
+import json
+
 import grpc
 import os
 from dotenv import load_dotenv
@@ -41,10 +43,10 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
 
     def ProcessLog(self, request, context):
         logger.info("\n=== NEW REQUEST RECEIVED ===")
-        
+
         if request.type == "REQUEST":
             logger.info("SENT TO RULES...")
-            
+
             try:
                 # Create analysis data from the request fields
                 analysis_data = {
@@ -57,7 +59,9 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     'body': request.body if request.body else '',
                     'client_id': request.client_id
                 }
-                
+
+                logger.info(f"Request data: {json.dumps(analysis_data, indent=2)}")
+
                 # Run rule engine checks
                 matched_rule = self.rule_engine.check_rules(analysis_data)
                 if matched_rule:
