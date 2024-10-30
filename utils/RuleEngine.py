@@ -5,6 +5,8 @@ from scipy.sparse import issparse
 import joblib
 from pymongo import MongoClient
 from bson.objectid import ObjectId
+
+from app import logger
 from utils.Rule import Rule
 from utils.CustomLabelEncoder import CustomLabelEncoder
 
@@ -88,9 +90,9 @@ class RuleEngine:
             df['path'] = split_result[0]
             df['query'] = split_result[1] if split_result.shape[1] > 1 else ''
 
-        print("DEBUG - Original Path:", data['path'])
-        print("DEBUG - Split Path:", df['path'].iloc[0])
-        print("DEBUG - Query:", df['query'].iloc[0])
+        logger.info(f"DEBUG - Original Path: {data['path']}")
+        logger.info(f"DEBUG - Split Path: {df['path'].iloc[0]}")
+        logger.info(f"DEBUG - Query: {df['query'].iloc[0]}")
 
         # Enhanced attack detection patterns
         sql_pattern = r'select|from|where|union|insert|update|delete|drop|exec|system'
@@ -120,13 +122,13 @@ class RuleEngine:
             ).astype(int)
         })
 
-        # Print debug info
-        print("\nDEBUG - Attack Indicators:")
-        print(f"SQL Keywords: {features['has_sql_keywords'].iloc[0]}")
-        print(f"Script/Dangerous Content: {features['has_script_tags'].iloc[0]}")
-        print(f"Query Present: {features['has_query'].iloc[0]}")
-        print(f"Path Depth: {features['path_depth'].iloc[0]}")
-        print(f"All Features: {features.iloc[0].to_dict()}")
+        # Log debug info
+        logger.info("\nDEBUG - Attack Indicators:")
+        logger.info(f"SQL Keywords: {features['has_sql_keywords'].iloc[0]}")
+        logger.info(f"Script/Dangerous Content: {features['has_script_tags'].iloc[0]}")
+        logger.info(f"Query Present: {features['has_query'].iloc[0]}")
+        logger.info(f"Path Depth: {features['path_depth'].iloc[0]}")
+        logger.info(f"All Features: {features.iloc[0].to_dict()}")
 
         return features
 
@@ -137,17 +139,17 @@ class RuleEngine:
         try:
             # Extract structured features
             X = self.extract_features(data)
-            print("Feature columns:", X.columns.tolist())
+            logger.info(f"Feature columns: {X.columns.tolist()}")
 
             # Get path features
             path = data['path'].split('?')[0] if '?' in data['path'] else data['path']
             path_features = self.vectorizer.transform([path])
-            print("Path features shape:", path_features.shape)
+            logger.info(f"Path features shape: {path_features.shape}")
 
             if self.preprocessor:
                 # Get preprocessed features in same order as training
                 X_preprocessed = self.preprocessor.transform(X)
-                print("Preprocessed shape:", X_preprocessed.shape)
+                logger.info(f"Preprocessed shape: {X_preprocessed.shape}")
 
                 # Convert to dense if needed
                 if issparse(X_preprocessed):
@@ -157,21 +159,21 @@ class RuleEngine:
 
                 # Combine features
                 X_combined = np.hstack((X_preprocessed, path_features))
-                print("Combined shape:", X_combined.shape)
+                logger.info(f"Combined shape: {X_combined.shape}")
 
                 # Make prediction with probability
                 prediction_proba = self.ml_model.predict_proba(X_combined)
                 prediction = prediction_proba[0][1] > 0.5  # Use probability threshold
 
-                print("Attack probability:", prediction_proba[0][1])
-                print("Prediction:", prediction)
+                logger.info(f"Attack probability: {prediction_proba[0][1]}")
+                logger.info(f"Prediction: {prediction}")
 
                 return bool(prediction)
             else:
                 raise ValueError("Preprocessor not loaded")
 
         except Exception as e:
-            print(f"Error in predict_anomaly: {str(e)}")
+            logger.error(f"Error in predict_anomaly: {str(e)}")
             raise
 
     def generate_rule_from_anomaly(self, data):
