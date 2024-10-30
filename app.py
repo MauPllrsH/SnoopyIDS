@@ -45,11 +45,25 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         matched_rules = []
         if request.type == "REQUEST":
             logger.info("SENT TO RULES...")
+            
             try:
-                body_data = json.loads(request.body)
+                # For GET requests, analyze URL components
+                if request.method == "GET":
+                    if not hasattr(request, 'analyzed_data'):
+                        logger.info("RULES RESPONSE: No URL analysis data available")
+                        return ids_pb2.ProcessResult(
+                            injection_detected=False,
+                            message="Request processed (no analysis data)",
+                            matched_rules=[]
+                        )
+                    
+                    analysis_data = request.analyzed_data
+                else:
+                    # For other methods, parse body if present
+                    analysis_data = json.loads(request.body) if request.body else {}
                 
                 # Check rules
-                matched_rule = self.rule_engine.check_rules(body_data)
+                matched_rule = self.rule_engine.check_rules(analysis_data)
                 if matched_rule:
                     matched_rules.append(matched_rule)
                     message = f"⚠️  Rule '{matched_rule}' matched"
@@ -61,17 +75,13 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         matched_rules=matched_rules
                     )
                 
-                # ML analysis if no rules matched
                 logger.info("SENT TO ML...")
                 try:
-                    is_anomaly = self.rule_engine.predict_anomaly(body_data)
+                    is_anomaly = self.rule_engine.predict_anomaly(analysis_data)
                     if is_anomaly:
-                        new_rule_name = self.rule_engine.generate_rule_from_anomaly(body_data)
-                        if new_rule_name:
-                            matched_rules.append(new_rule_name)
-                            message = f"🤖 ML model detected anomaly. Generated rule: {new_rule_name}"
-                        else:
-                            message = "🤖 ML model detected anomaly"
+                        new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
+                        matched_rules = [new_rule_name] if new_rule_name else []
+                        message = f"🤖 ML model detected anomaly" + (f". Generated rule: {new_rule_name}" if new_rule_name else "")
                         logger.warning(f"ML RESPONSE: {message}")
                         logger.info("FINAL DECISION = ATTACK DETECTED")
                         return ids_pb2.ProcessResult(
@@ -80,7 +90,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                             matched_rules=matched_rules
                         )
                     else:
-                        message = f"✅ No anomalies detected"
+                        message = "✅ No anomalies detected"
                         logger.info(f"ML RESPONSE: {message}")
                         logger.info("FINAL DECISION = NO ATTACK DETECTED")
                         return ids_pb2.ProcessResult(
@@ -89,26 +99,31 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                             matched_rules=[]
                         )
                 except Exception as e:
-                    error_message = f"❌ Error in ML prediction: {e}"
-                    logger.error(f"ML RESPONSE: {error_message}")
+                    message = f"Request processed (ML error: {str(e)})"
+                    logger.error(f"ML RESPONSE: Error in analysis")
                     logger.info("FINAL DECISION = ERROR IN PROCESSING")
                     return ids_pb2.ProcessResult(
                         injection_detected=False,
-                        message=error_message,
+                        message=message,
                         matched_rules=[]
                     )
                     
             except json.JSONDecodeError:
-                error_message = f"❌ Failed to parse body as JSON"
-                logger.error(f"RULES RESPONSE: {error_message}")
-                logger.info("FINAL DECISION = ERROR IN PROCESSING")
+                if request.method == "GET":
+                    # For GET requests, continue with URL analysis
+                    message = "Processing GET request parameters"
+                    logger.info(f"RULES RESPONSE: {message}")
+                else:
+                    message = "Invalid request format"
+                    logger.warning(f"RULES RESPONSE: {message}")
+                    logger.info("FINAL DECISION = ERROR IN PROCESSING")
                 return ids_pb2.ProcessResult(
                     injection_detected=False,
-                    message=error_message,
+                    message=message,
                     matched_rules=[]
                 )
         else:
-            message = "ℹ️  Non-REQUEST log or no body to inspect"
+            message = "Request processed (no analysis required)"
             logger.info(f"FINAL DECISION = {message}")
             return ids_pb2.ProcessResult(
                 injection_detected=False,
