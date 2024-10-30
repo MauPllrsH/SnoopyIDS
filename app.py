@@ -42,52 +42,55 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
     def ProcessLog(self, request, context):
         logger.info("\n=== NEW REQUEST RECEIVED ===")
         
-        matched_rules = []
         if request.type == "REQUEST":
             logger.info("SENT TO RULES...")
             
             try:
-                # For GET requests, analyze URL components
-                if request.method == "GET":
-                    if not hasattr(request, 'analyzed_data'):
-                        logger.info("RULES RESPONSE: No URL analysis data available")
-                        return ids_pb2.ProcessResult(
-                            injection_detected=False,
-                            message="Request processed (no analysis data)",
-                            matched_rules=[]
-                        )
-                    
-                    analysis_data = request.analyzed_data
-                else:
-                    # For other methods, parse body if present
-                    analysis_data = json.loads(request.body) if request.body else {}
-                
-                # Check rules
+                # Create a composite analysis object that includes all request components
+                analysis_data = {
+                    "method": request.method,
+                    "headers": getattr(request, 'headers', {}),
+                }
+
+                # Add URL analysis data if present
+                if hasattr(request, 'analyzed_data'):
+                    analysis_data.update({
+                        "url": request.analyzed_data
+                    })
+
+                # Add body analysis if present
+                if request.body:
+                    try:
+                        body_data = json.loads(request.body)
+                        analysis_data["body"] = body_data
+                    except json.JSONDecodeError:
+                        analysis_data["body"] = {"raw": request.body}
+
+                # Run rule engine checks on the complete request data
                 matched_rule = self.rule_engine.check_rules(analysis_data)
                 if matched_rule:
-                    matched_rules.append(matched_rule)
                     message = f"⚠️  Rule '{matched_rule}' matched"
                     logger.warning(f"RULES RESPONSE: {message}")
-                    logger.info(f"FINAL DECISION = ATTACK DETECTED")
+                    logger.info("FINAL DECISION = ATTACK DETECTED")
                     return ids_pb2.ProcessResult(
                         injection_detected=True,
                         message=message,
-                        matched_rules=matched_rules
+                        matched_rules=[matched_rule]
                     )
                 
+                # If no rule matches, use ML analysis
                 logger.info("SENT TO ML...")
                 try:
                     is_anomaly = self.rule_engine.predict_anomaly(analysis_data)
                     if is_anomaly:
                         new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
-                        matched_rules = [new_rule_name] if new_rule_name else []
                         message = f"🤖 ML model detected anomaly" + (f". Generated rule: {new_rule_name}" if new_rule_name else "")
                         logger.warning(f"ML RESPONSE: {message}")
                         logger.info("FINAL DECISION = ATTACK DETECTED")
                         return ids_pb2.ProcessResult(
                             injection_detected=True,
                             message=message,
-                            matched_rules=matched_rules
+                            matched_rules=[new_rule_name] if new_rule_name else []
                         )
                     else:
                         message = "✅ No anomalies detected"
@@ -108,15 +111,10 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         matched_rules=[]
                     )
                     
-            except json.JSONDecodeError:
-                if request.method == "GET":
-                    # For GET requests, continue with URL analysis
-                    message = "Processing GET request parameters"
-                    logger.info(f"RULES RESPONSE: {message}")
-                else:
-                    message = "Invalid request format"
-                    logger.warning(f"RULES RESPONSE: {message}")
-                    logger.info("FINAL DECISION = ERROR IN PROCESSING")
+            except Exception as e:
+                message = f"Error processing request: {str(e)}"
+                logger.error(f"RULES RESPONSE: {message}")
+                logger.info("FINAL DECISION = ERROR IN PROCESSING")
                 return ids_pb2.ProcessResult(
                     injection_detected=False,
                     message=message,
