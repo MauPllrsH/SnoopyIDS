@@ -1,3 +1,4 @@
+import json
 import re
 import pandas as pd
 import numpy as np
@@ -83,16 +84,9 @@ class RuleEngine:
     def extract_features(self, data):
         # Convert single request to DataFrame
         df = pd.DataFrame([data])
-
-        # Handle path and query splitting
-        if 'path' in df.columns:
-            split_result = df['path'].str.split('?', n=1, expand=True)
-            df['path'] = split_result[0]
-            df['query'] = split_result[1] if split_result.shape[1] > 1 else ''
-
-        logger.info(f"DEBUG - Original Path: {data['path']}")
-        logger.info(f"DEBUG - Split Path: {df['path'].iloc[0]}")
-        logger.info(f"DEBUG - Query: {df['query'].iloc[0]}")
+        logger.info(f"Input data for feature extraction: {json.dumps(data, indent=2)}")
+        logger.info(f"Input path: {data.get('path', '')}")
+        logger.info(f"Input query: {data.get('query', '')}")
 
         # Enhanced attack detection patterns
         sql_pattern = r'select|from|where|union|insert|update|delete|drop|exec|system'
@@ -100,7 +94,7 @@ class RuleEngine:
         dangerous_url_pattern = r'evil\.com|file://|http://|https://|ftp://|\/etc\/|\/var\/|\/root\/|\.\.\/|\%[0-9a-fA-F]{2}'
         format_string_pattern = r'\%[0-9]*[xsdfo]|\%n|\%p|\%x|\%d'
 
-        # Create features DataFrame with enhanced detection
+        # Create features DataFrame
         features = pd.DataFrame({
             'method': df['method'],
             'has_body': df['body'].notna().astype(int),
@@ -111,24 +105,24 @@ class RuleEngine:
             'body_length': df['body'].fillna('').astype(str).str.len(),
             'path_depth': df['path'].str.count('/'),
             'has_sql_keywords': (
-                    df['body'].fillna('').astype(str).str.lower().str.contains(sql_pattern) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(sql_pattern)
+                    df['body'].fillna('').astype(str).str.lower().str.contains(sql_pattern, regex=True) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(sql_pattern, regex=True)
             ).astype(int),
             'has_script_tags': (
-                    df['body'].fillna('').astype(str).str.lower().str.contains(script_pattern) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(script_pattern) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(dangerous_url_pattern) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(format_string_pattern)
+                    df['body'].fillna('').astype(str).str.lower().str.contains(script_pattern, regex=True) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(script_pattern, regex=True) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(dangerous_url_pattern, regex=True) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(format_string_pattern, regex=True)
             ).astype(int)
         })
 
-        # Log debug info
-        logger.info("\nDEBUG - Attack Indicators:")
-        logger.info(f"SQL Keywords: {features['has_sql_keywords'].iloc[0]}")
-        logger.info(f"Script/Dangerous Content: {features['has_script_tags'].iloc[0]}")
-        logger.info(f"Query Present: {features['has_query'].iloc[0]}")
-        logger.info(f"Path Depth: {features['path_depth'].iloc[0]}")
-        logger.info(f"All Features: {features.iloc[0].to_dict()}")
+        # Log the detection results
+        logger.info("\nFeature Extraction Results:")
+        logger.info(f"SQL Keywords detected: {features['has_sql_keywords'].iloc[0]}")
+        logger.info(f"Script/Dangerous Content detected: {features['has_script_tags'].iloc[0]}")
+        logger.info(f"Query present: {features['has_query'].iloc[0]}")
+        logger.info(f"Path depth: {features['path_depth'].iloc[0]}")
+        logger.info(f"All features: {features.iloc[0].to_dict()}")
 
         return features
 
@@ -137,36 +131,33 @@ class RuleEngine:
             raise ValueError("ML model or vectorizer not loaded")
 
         try:
-            # Extract structured features
-            X = self.extract_features(data)
-            logger.info(f"Feature columns: {X.columns.tolist()}")
+            logger.info("\nPrediction Process:")
+            path = data.get('path', '')
+            logger.info(f"Using path for vectorization: {path}")
 
-            # Get path features
-            path = data['path'].split('?')[0] if '?' in data['path'] else data['path']
+            X = self.extract_features(data)
+
             path_features = self.vectorizer.transform([path])
-            logger.info(f"Path features shape: {path_features.shape}")
+            logger.info(f"Path features generated with shape: {path_features.shape}")
 
             if self.preprocessor:
-                # Get preprocessed features in same order as training
                 X_preprocessed = self.preprocessor.transform(X)
-                logger.info(f"Preprocessed shape: {X_preprocessed.shape}")
+                logger.info(f"Preprocessed features shape: {X_preprocessed.shape}")
 
-                # Convert to dense if needed
                 if issparse(X_preprocessed):
                     X_preprocessed = X_preprocessed.toarray()
                 if issparse(path_features):
                     path_features = path_features.toarray()
 
-                # Combine features
                 X_combined = np.hstack((X_preprocessed, path_features))
-                logger.info(f"Combined shape: {X_combined.shape}")
+                logger.info(f"Combined feature shape: {X_combined.shape}")
 
                 # Make prediction with probability
                 prediction_proba = self.ml_model.predict_proba(X_combined)
-                prediction = prediction_proba[0][1] > 0.5  # Use probability threshold
+                prediction = prediction_proba[0][1] > 0.5
 
                 logger.info(f"Attack probability: {prediction_proba[0][1]}")
-                logger.info(f"Prediction: {prediction}")
+                logger.info(f"Final prediction: {prediction}")
 
                 return bool(prediction)
             else:

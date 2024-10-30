@@ -41,8 +41,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 # Split path and query first
                 path = request.path
                 query = ''
+                logger.info(f"Original path: {path}")
+
                 if '?' in path:
                     path, query = path.split('?', 1)
+                    logger.info(f"After splitting - Path: {path}, Query: {query}")
 
                 # Create analysis data from the request fields
                 analysis_data = {
