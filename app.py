@@ -46,27 +46,10 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             logger.info("SENT TO RULES...")
             
             try:
-                # Create a composite analysis object that includes all request components
-                analysis_data = {
-                    "method": request.method,
-                    "headers": getattr(request, 'headers', {}),
-                }
-
-                # Add URL analysis data if present
-                if hasattr(request, 'analyzed_data'):
-                    analysis_data.update({
-                        "url": request.analyzed_data
-                    })
-
-                # Add body analysis if present
-                if request.body:
-                    try:
-                        body_data = json.loads(request.body)
-                        analysis_data["body"] = body_data
-                    except json.JSONDecodeError:
-                        analysis_data["body"] = {"raw": request.body}
-
-                # Run rule engine checks on the complete request data
+                # Parse the analysis data from JSON string
+                analysis_data = json.loads(request.analysis_data)
+                
+                # Run rule engine checks
                 matched_rule = self.rule_engine.check_rules(analysis_data)
                 if matched_rule:
                     message = f"⚠️  Rule '{matched_rule}' matched"
@@ -111,9 +94,18 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         matched_rules=[]
                     )
                     
+            except json.JSONDecodeError as e:
+                message = f"Error parsing analysis data: {str(e)}"
+                logger.error(f"Error: {message}")
+                logger.info("FINAL DECISION = ERROR IN PROCESSING")
+                return ids_pb2.ProcessResult(
+                    injection_detected=False,
+                    message=message,
+                    matched_rules=[]
+                )
             except Exception as e:
                 message = f"Error processing request: {str(e)}"
-                logger.error(f"RULES RESPONSE: {message}")
+                logger.error(f"Error: {message}")
                 logger.info("FINAL DECISION = ERROR IN PROCESSING")
                 return ids_pb2.ProcessResult(
                     injection_detected=False,
