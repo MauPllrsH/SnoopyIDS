@@ -82,15 +82,24 @@ class RuleEngine:
         # Convert single request to DataFrame
         df = pd.DataFrame([data])
 
-        # Add query field like in training
-        df['query'] = df['path'].apply(lambda x: x.split('?')[1] if isinstance(x, str) and '?' in x else '')
-        df['path'] = df['path'].apply(lambda x: x.split('?')[0] if isinstance(x, str) and '?' in x else x)
+        # Extract query from path if it exists
+        df['query'] = ''  # Initialize empty query
+        if 'path' in df.columns:
+            path_parts = df['path'].str.split('?', n=1, expand=True)
+            if path_parts.shape[1] > 1:  # If there's a query part
+                df['path'] = path_parts[0]
+                df['query'] = path_parts[1]
+            else:
+                df['path'] = df['path']
+
+        print("DEBUG - Path:", df['path'].iloc[0])  # Debug print
+        print("DEBUG - Query:", df['query'].iloc[0])  # Debug print
 
         return pd.DataFrame({
             'method': df['method'],
             'has_body': df['body'].notna().astype(int),
             'header_count': df['headers'].apply(lambda x: len(x) if isinstance(x, dict) else 0),
-            'has_query': df['query'].notna().astype(int),  # Changed to match training
+            'has_query': df['query'].astype(str).str.len().gt(0).astype(int),  # Changed this
             'content_type': df['headers'].apply(lambda x: 1 if 'content-type' in str(x).lower() else 0),
             'user_agent': df['headers'].apply(lambda x: 1 if 'user-agent' in str(x).lower() else 0),
             'body_length': df['body'].fillna('').astype(str).str.len(),
