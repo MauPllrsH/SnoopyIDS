@@ -8,6 +8,7 @@ from bson.objectid import ObjectId
 from utils.Rule import Rule
 
 
+
 class RuleEngine:
     def __init__(self, mongo_uri, db_name, collection_name):
         self.client = MongoClient(mongo_uri)
