@@ -35,10 +35,9 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
         self.rule_engine.load_rules()
         self.rule_engine.load_ml_model(
-            model_path='models/ensemble_model.joblib',
+            model_path='models/model_info.joblib',
             vectorizer_path='models/vectorizer.joblib',
             preprocessor_path='models/preprocessor.joblib',
-            label_encoder_path='models/label_encoder.joblib'
         )
 
     def ProcessLog(self, request, context):

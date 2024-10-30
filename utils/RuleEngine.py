@@ -59,14 +59,24 @@ class RuleEngine:
         self.load_rules()
 
     def load_ml_model(self, model_path, vectorizer_path, preprocessor_path=None, label_encoder_path=None):
-        model_info = joblib.load(model_path)
-        self.ml_model = model_info['model']
-        self.n_features = model_info['n_features']
-        self.feature_names = model_info['feature_names']
-        self.vectorizer = joblib.load(vectorizer_path)
-        if preprocessor_path:
-            print("Method values in training:", self.preprocessor.named_transformers_['cat'].categories_)
-            self.preprocessor = joblib.load(preprocessor_path)
+        try:
+            # Load model info first
+            model_info = joblib.load(model_path)
+            self.ml_model = model_info['model']
+            self.n_features = model_info['n_features']
+            self.feature_names = model_info['feature_names']
+
+            # Load vectorizer
+            self.vectorizer = joblib.load(vectorizer_path)
+
+            # Load preprocessor if available
+            if preprocessor_path:
+                self.preprocessor = joblib.load(preprocessor_path)
+                print("Method values in training:", self.preprocessor.named_transformers_['cat'].categories_)
+
+        except Exception as e:
+            print(f"Error loading model components: {str(e)}")
+            raise
 
     def extract_features(self, data):
         # Convert single request to DataFrame
