@@ -8,20 +8,12 @@ from utils.RuleEngine import RuleEngine
 import ids_pb2
 import ids_pb2_grpc
 from urllib.parse import quote_plus
-import logging
 from datetime import datetime
+from utils.logger_config import logger
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('/app/ids_server.log')
-    ]
-)
-logger = logging.getLogger('ids_server')
+
 
 class IDSServicer(ids_pb2_grpc.IDSServicer):
     def __init__(self):
@@ -29,7 +21,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         mongo_password = quote_plus(os.getenv('MONGO_PASSWORD'))
         mongo_port = os.getenv('MONGO_PORT')
         mongo_database = os.getenv('MONGO_DATABASE')
-        
+
         mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
 
         self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
