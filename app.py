@@ -47,6 +47,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             
             try:
                 # Parse the analysis data from JSON string
+                logger.info("BEFORE THIS LINE analysis_data = json.loads(request.analysis_data)")
                 analysis_data = json.loads(request.analysis_data)
                 
                 # Run rule engine checks
