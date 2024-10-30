@@ -50,7 +50,9 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 analysis_data = json.loads(request.analysis_data)
                 
                 # Run rule engine checks
+                logger.info("NOT THIS LINE analysis_data = json.loads(request.analysis_data)")
                 matched_rule = self.rule_engine.check_rules(analysis_data)
+                logger.info("NOT THIS LINE matched_rule = self.rule_engine.check_rules(analysis_data)")
                 if matched_rule:
                     message = f"⚠️  Rule '{matched_rule}' matched"
                     logger.warning(f"RULES RESPONSE: {message}")
