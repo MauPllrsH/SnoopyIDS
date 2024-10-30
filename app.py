@@ -46,15 +46,20 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             logger.info("SENT TO RULES...")
             
             try:
-                # Parse the analysis data from JSON string
-                logger.info("BEFORE THIS LINE analysis_data = json.loads(request.analysis_data)")
-                logger.info(request)
-                analysis_data = json.loads(request.analysis_data)
+                # Create analysis data from the request fields
+                analysis_data = {
+                    'timestamp': request.timestamp,
+                    'type': request.type,
+                    'ip': request.ip,
+                    'method': request.method,
+                    'path': request.path,
+                    'headers': dict(request.headers),
+                    'body': request.body if request.body else '',
+                    'client_id': request.client_id
+                }
                 
                 # Run rule engine checks
-                logger.info("NOT THIS LINE analysis_data = json.loads(request.analysis_data)")
                 matched_rule = self.rule_engine.check_rules(analysis_data)
-                logger.info("NOT THIS LINE matched_rule = self.rule_engine.check_rules(analysis_data)")
                 if matched_rule:
                     message = f"⚠️  Rule '{matched_rule}' matched"
                     logger.warning(f"RULES RESPONSE: {message}")
@@ -98,15 +103,6 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         matched_rules=[]
                     )
                     
-            except json.JSONDecodeError as e:
-                message = f"Error parsing analysis data: {str(e)}"
-                logger.error(f"Error: {message}")
-                logger.info("FINAL DECISION = ERROR IN PROCESSING")
-                return ids_pb2.ProcessResult(
-                    injection_detected=False,
-                    message=message,
-                    matched_rules=[]
-                )
             except Exception as e:
                 message = f"Error processing request: {str(e)}"
                 logger.error(f"Error: {message}")
