@@ -82,31 +82,53 @@ class RuleEngine:
         # Convert single request to DataFrame
         df = pd.DataFrame([data])
 
-        # Extract query from path if it exists
+        # Handle path and query splitting
         if 'path' in df.columns:
-            path_parts = df['path'].str.split('?', n=1, expand=True)
-            if path_parts.shape[1] > 1:  # If there's a query part
-                df['path'] = path_parts[0]
-                df['query'] = path_parts[1]
-            else:
-                df['path'] = df['path']
+            split_result = df['path'].str.split('?', n=1, expand=True)
+            df['path'] = split_result[0]
+            df['query'] = split_result[1] if split_result.shape[1] > 1 else ''
 
-        print("DEBUG - Path:", df['path'].iloc[0])  # Debug print
-        print("DEBUG - Query:", df['query'].iloc[0])  # Debug print
+        print("DEBUG - Original Path:", data['path'])
+        print("DEBUG - Split Path:", df['path'].iloc[0])
+        print("DEBUG - Query:", df['query'].iloc[0])
 
-        return pd.DataFrame({
+        # Enhanced attack detection patterns
+        sql_pattern = r'select|from|where|union|insert|update|delete|drop|exec|system'
+        script_pattern = r'<script|javascript:|data:|alert\(|eval\(|setTimeout|setInterval'
+        dangerous_url_pattern = r'evil\.com|file://|http://|https://|ftp://|\/etc\/|\/var\/|\/root\/|\.\.\/|\%[0-9a-fA-F]{2}'
+        format_string_pattern = r'\%[0-9]*[xsdfo]|\%n|\%p|\%x|\%d'
+
+        # Create features DataFrame with enhanced detection
+        features = pd.DataFrame({
             'method': df['method'],
             'has_body': df['body'].notna().astype(int),
             'header_count': df['headers'].apply(lambda x: len(x) if isinstance(x, dict) else 0),
-            'has_query': df['query'].astype(str).str.len().gt(0).astype(int),  # Changed this
+            'has_query': df['query'].astype(str).str.len().gt(0).astype(int),
             'content_type': df['headers'].apply(lambda x: 1 if 'content-type' in str(x).lower() else 0),
             'user_agent': df['headers'].apply(lambda x: 1 if 'user-agent' in str(x).lower() else 0),
             'body_length': df['body'].fillna('').astype(str).str.len(),
             'path_depth': df['path'].str.count('/'),
-            'has_sql_keywords': df['body'].fillna('').astype(str).str.lower().str.contains(
-                'select|from|where|union|insert|update|delete').astype(int),
-            'has_script_tags': df['body'].fillna('').astype(str).str.lower().str.contains('<script').astype(int)
+            'has_sql_keywords': (
+                    df['body'].fillna('').astype(str).str.lower().str.contains(sql_pattern) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(sql_pattern)
+            ).astype(int),
+            'has_script_tags': (
+                    df['body'].fillna('').astype(str).str.lower().str.contains(script_pattern) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(script_pattern) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(dangerous_url_pattern) |
+                    df['query'].fillna('').astype(str).str.lower().str.contains(format_string_pattern)
+            ).astype(int)
         })
+
+        # Print debug info
+        print("\nDEBUG - Attack Indicators:")
+        print(f"SQL Keywords: {features['has_sql_keywords'].iloc[0]}")
+        print(f"Script/Dangerous Content: {features['has_script_tags'].iloc[0]}")
+        print(f"Query Present: {features['has_query'].iloc[0]}")
+        print(f"Path Depth: {features['path_depth'].iloc[0]}")
+        print(f"All Features: {features.iloc[0].to_dict()}")
+
+        return features
 
     def predict_anomaly(self, data):
         if self.ml_model is None or self.vectorizer is None:
@@ -118,13 +140,9 @@ class RuleEngine:
             print("Feature columns:", X.columns.tolist())
 
             # Get path features
-            path = data['path'] if data['path'] else ''
+            path = data['path'].split('?')[0] if '?' in data['path'] else data['path']
             path_features = self.vectorizer.transform([path])
             print("Path features shape:", path_features.shape)
-
-            # Split features into categorical and numerical
-            categorical_columns = ['method']
-            numerical_columns = [col for col in X.columns if col not in categorical_columns]
 
             if self.preprocessor:
                 # Get preprocessed features in same order as training
@@ -141,19 +159,14 @@ class RuleEngine:
                 X_combined = np.hstack((X_preprocessed, path_features))
                 print("Combined shape:", X_combined.shape)
 
-                if X_combined.shape[1] != 60:  # Expected number of features from training
-                    print(f"WARNING: Feature mismatch. Got {X_combined.shape[1]} features, expected 60")
-                    # Pad or trim to match expected size
-                    if X_combined.shape[1] > 60:
-                        X_combined = X_combined[:, :60]
-                    else:
-                        padding = np.zeros((X_combined.shape[0], 60 - X_combined.shape[1]))
-                        X_combined = np.hstack((X_combined, padding))
+                # Make prediction with probability
+                prediction_proba = self.ml_model.predict_proba(X_combined)
+                prediction = prediction_proba[0][1] > 0.5  # Use probability threshold
 
-                # Make prediction
-                prediction = self.ml_model.predict(X_combined)
-                print("Prediction:", bool(prediction[0]))
-                return bool(prediction[0])
+                print("Attack probability:", prediction_proba[0][1])
+                print("Prediction:", prediction)
+
+                return bool(prediction)
             else:
                 raise ValueError("Preprocessor not loaded")
 
