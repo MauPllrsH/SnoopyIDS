@@ -70,11 +70,15 @@ class RuleEngine:
         # Convert single request to DataFrame
         df = pd.DataFrame([data])
 
+        # Add query field like in training
+        df['query'] = df['path'].apply(lambda x: x.split('?')[1] if isinstance(x, str) and '?' in x else '')
+        df['path'] = df['path'].apply(lambda x: x.split('?')[0] if isinstance(x, str) and '?' in x else x)
+
         return pd.DataFrame({
             'method': df['method'],
             'has_body': df['body'].notna().astype(int),
             'header_count': df['headers'].apply(lambda x: len(x) if isinstance(x, dict) else 0),
-            'has_query': df['path'].apply(lambda x: '?' in str(x)).astype(int),
+            'has_query': df['query'].notna().astype(int),  # Changed to match training
             'content_type': df['headers'].apply(lambda x: 1 if 'content-type' in str(x).lower() else 0),
             'user_agent': df['headers'].apply(lambda x: 1 if 'user-agent' in str(x).lower() else 0),
             'body_length': df['body'].fillna('').astype(str).str.len(),
@@ -88,38 +92,42 @@ class RuleEngine:
         if self.ml_model is None or self.vectorizer is None:
             raise ValueError("ML model or vectorizer not loaded")
 
-        # Extract structured features
-        X = self.extract_features(data)
-        print("Feature columns:", X.columns.tolist())
+        try:
+            # Extract structured features
+            X = self.extract_features(data)
+            print("Feature columns:", X.columns.tolist())
 
-        # Transform path using TF-IDF
-        path_features = self.vectorizer.transform([data['path']])
-        print("Path features shape:", path_features.shape)
+            # Transform path using TF-IDF
+            path_features = self.vectorizer.transform([data['path']])
+            print("Path features shape:", path_features.shape)
 
-        # Split features into categorical and numerical
-        categorical_columns = ['method']
-        numerical_columns = [col for col in X.columns if col not in categorical_columns]
-        print("Numerical columns:", numerical_columns)
-        print("Categorical columns:", categorical_columns)
+            # Split features into categorical and numerical
+            categorical_columns = ['method']
+            numerical_columns = [col for col in X.columns if col not in categorical_columns]
 
-        if self.preprocessor:
-            # Apply preprocessing if available
-            X_num = self.preprocessor.named_transformers_['num'].transform(X[numerical_columns])
-            X_cat = self.preprocessor.named_transformers_['cat'].transform(X[categorical_columns])
-            print("Numerical features shape:", X_num.shape if not issparse(X_num) else X_num.toarray().shape)
-            print("Categorical features shape:", X_cat.shape if not issparse(X_cat) else X_cat.toarray().shape)
+            if self.preprocessor:
+                # Apply preprocessing exactly like in training
+                X_preprocessed = self.preprocessor.transform(X)
 
-            # Convert sparse matrices to dense if needed
-            if issparse(X_num):
-                X_num = X_num.toarray()
-            if issparse(X_cat):
-                X_cat = X_cat.toarray()
-            if issparse(path_features):
-                path_features = path_features.toarray()
+                # Convert sparse matrices to dense if needed
+                if issparse(X_preprocessed):
+                    X_preprocessed = X_preprocessed.toarray()
+                if issparse(path_features):
+                    path_features = path_features.toarray()
 
-            # Combine all features
-            X_combined = np.hstack((X_num, X_cat, path_features))
-            print("Combined features shape:", X_combined.shape)
+                # Combine features in same order as training
+                X_combined = np.hstack((X_preprocessed, path_features))
+                print("Combined features shape:", X_combined.shape)
+
+                # Actually make the prediction!
+                prediction = self.ml_model.predict(X_combined)
+                return bool(prediction[0])
+            else:
+                raise ValueError("Preprocessor not loaded")
+
+        except Exception as e:
+            print(f"Error in predict_anomaly: {str(e)}")
+            raise
 
     def generate_rule_from_anomaly(self, data):
         # Enhanced rule generation
