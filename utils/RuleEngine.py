@@ -6,6 +6,7 @@ import joblib
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from utils.Rule import Rule
+from utils.CustomLabelEncoder import CustomLabelEncoder
 
 
 
