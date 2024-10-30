@@ -2,8 +2,6 @@ import grpc
 import os
 from dotenv import load_dotenv
 from concurrent import futures
-import time
-import json
 from utils.RuleEngine import RuleEngine
 import ids_pb2
 import ids_pb2_grpc
@@ -36,7 +34,9 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         self.rule_engine.load_rules()
         self.rule_engine.load_ml_model(
             model_path='models/ensemble_model.joblib',
-            vectorizer_path='models/vectorizer.joblib'
+            vectorizer_path='models/vectorizer.joblib',
+            preprocessor_path='models/preprocessor.joblib',
+            label_encoder_path='models/label_encoder.joblib'
         )
 
     def ProcessLog(self, request, context):
