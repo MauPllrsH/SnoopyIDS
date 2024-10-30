@@ -133,10 +133,38 @@ class RuleEngine:
         try:
             logger.info("\nPrediction Process:")
             path = data.get('path', '')
+            query = data.get('query', '')
             logger.info(f"Using path for vectorization: {path}")
 
             X = self.extract_features(data)
 
+            # Define critical attack patterns
+            critical_patterns = {
+                'sql_injection': r'(\b|;)(select|drop|update|delete|insert|alter|union)\b',
+                'path_traversal': r'\.\.\/|\/etc\/|\/var\/|\/root\/',
+                'rfi': r'https?:\/\/|file:\/\/|ftp:\/\/',
+                'command_injection': r';\s*\w+|\|\s*\w+|\`.*\`',
+                'xss': r'<[^>]*>|javascript:|data:|alert\s*\(|eval\s*\('
+            }
+
+            # Check for critical patterns
+            attack_matches = {}
+            for attack_type, pattern in critical_patterns.items():
+                match_in_query = bool(re.search(pattern, query.lower()))
+                match_in_path = bool(re.search(pattern, path.lower()))
+                match_in_body = bool(re.search(pattern, data.get('body', '').lower()))
+                attack_matches[attack_type] = match_in_query or match_in_path or match_in_body
+
+            logger.info("Attack Pattern Matches:")
+            for attack_type, matched in attack_matches.items():
+                logger.info(f"{attack_type}: {matched}")
+
+            # If any critical pattern matches, it's definitely an attack
+            if any(attack_matches.values()):
+                logger.info("Critical attack pattern detected!")
+                return True
+
+            # If no critical patterns, proceed with ML prediction
             path_features = self.vectorizer.transform([path])
             logger.info(f"Path features generated with shape: {path_features.shape}")
 
@@ -154,12 +182,23 @@ class RuleEngine:
 
                 # Make prediction with probability
                 prediction_proba = self.ml_model.predict_proba(X_combined)
-                prediction = prediction_proba[0][1] > 0.5
+                attack_probability = prediction_proba[0][1]
 
-                logger.info(f"Attack probability: {prediction_proba[0][1]}")
-                logger.info(f"Final prediction: {prediction}")
+                logger.info(f"Attack probability from ML: {attack_probability}")
 
-                return bool(prediction)
+                # Use different thresholds based on feature presence
+                has_query = X['has_query'].iloc[0] == 1
+                has_suspicious_content = (X['has_sql_keywords'].iloc[0] == 1 or
+                                          X['has_script_tags'].iloc[0] == 1)
+
+                # Lower threshold if request has suspicious characteristics
+                threshold = 0.3 if (has_query or has_suspicious_content) else 0.5
+
+                logger.info(f"Using threshold: {threshold} (adjusted based on request characteristics)")
+                final_prediction = attack_probability > threshold
+
+                logger.info(f"Final prediction: {final_prediction}")
+                return bool(final_prediction)
             else:
                 raise ValueError("Preprocessor not loaded")
 
