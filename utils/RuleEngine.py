@@ -7,7 +7,6 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 from utils.logger_config import logger
 
-from app import logger
 from utils.Rule import Rule
 from utils.CustomLabelEncoder import CustomLabelEncoder
 

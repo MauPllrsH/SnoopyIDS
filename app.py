@@ -14,7 +14,6 @@ from utils.logger_config import logger
 load_dotenv()
 
 
-
 class IDSServicer(ids_pb2_grpc.IDSServicer):
     def __init__(self):
         mongo_user = quote_plus(os.getenv('MONGO_USER'))
@@ -73,14 +72,15 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         message=message,
                         matched_rules=[matched_rule]
                     )
-                
+
                 # If no rule matches, use ML analysis
                 logger.info("SENT TO ML...")
                 try:
                     is_anomaly = self.rule_engine.predict_anomaly(analysis_data)
                     if is_anomaly:
                         new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
-                        message = f"🤖 ML model detected anomaly" + (f". Generated rule: {new_rule_name}" if new_rule_name else "")
+                        message = f"🤖 ML model detected anomaly" + (
+                            f". Generated rule: {new_rule_name}" if new_rule_name else "")
                         logger.warning(f"ML RESPONSE: {message}")
                         logger.info("FINAL DECISION = ATTACK DETECTED")
                         return ids_pb2.ProcessResult(
@@ -106,7 +106,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                         message=message,
                         matched_rules=[]
                     )
-                    
+
             except Exception as e:
                 message = f"Error processing request: {str(e)}"
                 logger.error(f"Error: {message}")
@@ -127,6 +127,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
 
     def HealthCheck(self, request, context):
         return ids_pb2.HealthCheckResponse(is_healthy=True)
+
 
 def serve():
     # Load SSL/TLS certificates
@@ -159,19 +160,20 @@ def serve():
         options=server_options
     )
     ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
-    
+
     server_address = '0.0.0.0:50051'
     server.add_secure_port(server_address, server_credentials)
-    
+
     logger.info("Starting IDS Server")
     server.start()
-    
+
     try:
         while True:
             server.wait_for_termination()
     except KeyboardInterrupt:
         logger.info("Shutting down IDS server")
         server.stop(0)
+
 
 if __name__ == '__main__':
     serve()
