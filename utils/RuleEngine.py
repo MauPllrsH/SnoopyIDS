@@ -83,7 +83,6 @@ class RuleEngine:
         df = pd.DataFrame([data])
 
         # Extract query from path if it exists
-        df['query'] = ''  # Initialize empty query
         if 'path' in df.columns:
             path_parts = df['path'].str.split('?', n=1, expand=True)
             if path_parts.shape[1] > 1:  # If there's a query part
