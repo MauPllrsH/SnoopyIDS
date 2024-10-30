@@ -90,18 +90,24 @@ class RuleEngine:
 
         # Extract structured features
         X = self.extract_features(data)
+        print("Feature columns:", X.columns.tolist())
 
         # Transform path using TF-IDF
         path_features = self.vectorizer.transform([data['path']])
+        print("Path features shape:", path_features.shape)
 
         # Split features into categorical and numerical
         categorical_columns = ['method']
         numerical_columns = [col for col in X.columns if col not in categorical_columns]
+        print("Numerical columns:", numerical_columns)
+        print("Categorical columns:", categorical_columns)
 
         if self.preprocessor:
             # Apply preprocessing if available
             X_num = self.preprocessor.named_transformers_['num'].transform(X[numerical_columns])
             X_cat = self.preprocessor.named_transformers_['cat'].transform(X[categorical_columns])
+            print("Numerical features shape:", X_num.shape if not issparse(X_num) else X_num.toarray().shape)
+            print("Categorical features shape:", X_cat.shape if not issparse(X_cat) else X_cat.toarray().shape)
 
             # Convert sparse matrices to dense if needed
             if issparse(X_num):
@@ -113,15 +119,7 @@ class RuleEngine:
 
             # Combine all features
             X_combined = np.hstack((X_num, X_cat, path_features))
-        else:
-            # Fallback to simpler processing if preprocessor not available
-            if issparse(path_features):
-                path_features = path_features.toarray()
-            X_combined = path_features
-
-        # Make prediction
-        prediction = self.ml_model.predict(X_combined)
-        return bool(prediction[0])
+            print("Combined features shape:", X_combined.shape)
 
     def generate_rule_from_anomaly(self, data):
         # Enhanced rule generation
