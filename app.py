@@ -47,19 +47,28 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             logger.info("SENT TO RULES...")
 
             try:
+                # Split path and query first
+                path = request.path
+                query = ''
+                if '?' in path:
+                    path, query = path.split('?', 1)
+
                 # Create analysis data from the request fields
                 analysis_data = {
                     'timestamp': request.timestamp,
                     'type': request.type,
                     'ip': request.ip,
                     'method': request.method,
-                    'path': request.path,
+                    'path': path,
+                    'query': query,  # Add query field
                     'headers': dict(request.headers),
                     'body': request.body if request.body else '',
                     'client_id': request.client_id
                 }
 
                 logger.info(f"Request data: {json.dumps(analysis_data, indent=2)}")
+
+                # Rest of your code...
 
                 # Run rule engine checks
                 matched_rule = self.rule_engine.check_rules(analysis_data)
