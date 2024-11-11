@@ -53,6 +53,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 'client_id': request.client_id
             }
 
+            logger.info("=========== New Request Receieved =============")
             # Check rules first
             matched_rule = self.rule_engine.check_rules(analysis_data)
             if matched_rule:

@@ -114,14 +114,6 @@ class RuleEngine:
             ).astype(int)
         })
 
-        # Log the detection results
-        logger.info("\nFeature Extraction Results:")
-        logger.info(f"SQL Keywords detected: {features['has_sql_keywords'].iloc[0]}")
-        logger.info(f"Script/Dangerous Content detected: {features['has_script_tags'].iloc[0]}")
-        logger.info(f"Query present: {features['has_query'].iloc[0]}")
-        logger.info(f"Path depth: {features['path_depth'].iloc[0]}")
-        logger.info(f"All features: {features.iloc[0].to_dict()}")
-
         return features
 
     def predict_anomaly(self, data):
