@@ -1,4 +1,3 @@
-import json
 import re
 import pandas as pd
 import numpy as np
@@ -158,19 +157,19 @@ class RuleEngine:
 
             # Check which features contributed to the detection
             if features['has_sql_keywords'].iloc[0] == 1:
-                pattern = self._extract_pattern_from_content(
+                pattern = self.extract_pattern_from_content(
                     data.get('query', ''),
                     data.get('body', ''),
-                    r'(select|insert|update|delete|union).*'
+                    base_pattern=r'(select|insert|update|delete|union).*'
                 )
                 if pattern:
                     rules_to_generate.append(('query', pattern))
 
             if features['has_script_tags'].iloc[0] == 1:
-                pattern = self._extract_pattern_from_content(
+                pattern = self.extract_pattern_from_content(
                     data.get('query', ''),
                     data.get('body', ''),
-                    r'(<script.*?>|javascript:.*|data:.*)'
+                    base_pattern=r'(<script.*?>|javascript:.*|data:.*)'
                 )
                 if pattern:
                     rules_to_generate.append(('body', pattern))
@@ -178,7 +177,7 @@ class RuleEngine:
             # Generate rules based on path if it contributed to detection
             path_features = self.vectorizer.transform([data.get('path', '')])
             if path_features.getnnz() > 0:  # If path had significant features
-                pattern = self._extract_pattern_from_path(data.get('path', ''))
+                pattern = self.extract_pattern_from_path(data.get('path', ''))
                 if pattern:
                     rules_to_generate.append(('path', pattern))
 
@@ -199,7 +198,8 @@ class RuleEngine:
             logger.error(f"Error generating rules from anomaly: {str(e)}")
             return None
 
-    def _extract_pattern_from_content(self, *contents, base_pattern):
+
+    def extract_pattern_from_content(self, *contents, base_pattern):
         """Extract patterns from content that matched ML features."""
         for content in contents:
             if not content:
@@ -215,7 +215,8 @@ class RuleEngine:
                 return re.escape(context).replace('\\s+', '\\s+')
         return None
 
-    def _extract_pattern_from_path(self, path):
+
+    def extract_pattern_from_path(self, path):
         """Extract suspicious patterns from path based on ML vectorizer."""
         if not path:
             return None
