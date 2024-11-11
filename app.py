@@ -1,17 +1,28 @@
-import json
-import grpc
-import os
-from dotenv import load_dotenv
-from concurrent import futures
-from utils.RuleEngine import RuleEngine
-import ids_pb2
-import ids_pb2_grpc
-from urllib.parse import quote_plus
-from datetime import datetime
-from utils.logger_config import logger
-from pymongo import MongoClient  # Add this import
+# Debug prints at the very start
+print("Starting application...")
 
-load_dotenv()
+try:
+    print("Importing modules...")
+    import json
+    import grpc
+    import os
+    from dotenv import load_dotenv
+    from concurrent import futures
+    from utils.RuleEngine import RuleEngine
+    import ids_pb2
+    import ids_pb2_grpc
+    from urllib.parse import quote_plus
+    from datetime import datetime
+    from utils.logger_config import logger
+    from pymongo import MongoClient
+    print("All modules imported successfully")
+
+    load_dotenv()
+    print("Environment variables loaded")
+
+except Exception as e:
+    print(f"Error during imports: {str(e)}")
+    raise e
 
 
 class IDSServicer(ids_pb2_grpc.IDSServicer):
@@ -87,7 +98,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         except Exception as e:
             logger.error(f"Failed to store log in MongoDB: {str(e)}")
             logger.exception("Full traceback:")
-            
+
     def ProcessLog(self, request, context):
         """Process incoming log requests with minimal logging."""
         try:
