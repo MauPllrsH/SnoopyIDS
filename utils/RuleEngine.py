@@ -198,7 +198,6 @@ class RuleEngine:
             logger.error(f"Error generating rules from anomaly: {str(e)}")
             return None
 
-
     def extract_pattern_from_content(self, *contents, base_pattern):
         """Extract patterns from content that matched ML features."""
         for content in contents:
@@ -214,7 +213,6 @@ class RuleEngine:
                 # Escape special characters but keep the pattern structure
                 return re.escape(context).replace('\\s+', '\\s+')
         return None
-
 
     def extract_pattern_from_path(self, path):
         """Extract suspicious patterns from path based on ML vectorizer."""
@@ -237,10 +235,25 @@ class RuleEngine:
         path_parts = path.split('/')
         pattern_parts = []
 
+        # At least one part must contain a suspicious feature to create a rule
+        found_suspicious = False
+
         for part in path_parts:
             if any(feature in part.lower() for feature in important_features):
                 pattern_parts.append(re.escape(part))
+                found_suspicious = True
             else:
-                pattern_parts.append('[^/]+')
+                # Only use wildcard for non-suspicious parts if we found a suspicious part
+                pattern_parts.append('[^/]+' if found_suspicious else re.escape(part))
 
-        return '/'.join(pattern_parts)
+        # Don't create a rule if no suspicious parts were found
+        if not found_suspicious:
+            return None
+
+        final_pattern = '/'.join(pattern_parts)
+
+        # Don't create overly general patterns
+        if final_pattern in ['[^/]+/[^/]+', '/']:
+            return None
+
+        return final_pattern
