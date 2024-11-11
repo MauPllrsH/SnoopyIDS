@@ -32,99 +32,90 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         )
 
     def ProcessLog(self, request, context):
-        logger.info("\n=== NEW REQUEST RECEIVED ===")
+        """Process incoming log requests with streamlined logging."""
+        try:
+            # Split path and query
+            path = request.path
+            query = ''
+            if '?' in path:
+                path, query = path.split('?', 1)
 
-        if request.type == "REQUEST":
-            logger.info("SENT TO RULES...")
+            # Create analysis data
+            analysis_data = {
+                'timestamp': request.timestamp,
+                'type': request.type,
+                'ip': request.ip,
+                'method': request.method,
+                'path': path,
+                'query': query,
+                'headers': dict(request.headers),
+                'body': request.body if request.body else '',
+                'client_id': request.client_id
+            }
 
+            # Check rules first
+            matched_rule = self.rule_engine.check_rules(analysis_data)
+            if matched_rule:
+                logger.warning("\n=== ATTACK DETECTED (Rule Match) ===")
+                logger.warning(f"Rule: {matched_rule}")
+                logger.warning("Request Details:")
+                logger.warning(f"Method: {request.method}")
+                logger.warning(f"Path: {path}")
+                logger.warning(f"Query: {query}")
+                logger.warning(f"Body: {request.body}")
+                logger.warning(f"IP: {request.ip}")
+                logger.warning("=" * 50)
+
+                return ids_pb2.ProcessResult(
+                    injection_detected=True,
+                    message=f"⚠️  Rule '{matched_rule}' matched",
+                    matched_rules=[matched_rule]
+                )
+
+            # If no rule matches, use ML analysis
             try:
-                # Split path and query first
-                path = request.path
-                query = ''
-                logger.info(f"Original path: {path}")
+                is_anomaly = self.rule_engine.predict_anomaly(analysis_data)
+                if is_anomaly:
+                    new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
 
-                if '?' in path:
-                    path, query = path.split('?', 1)
-                    logger.info(f"After splitting - Path: {path}, Query: {query}")
+                    logger.warning("\n=== ATTACK DETECTED (ML Model) ===")
+                    logger.warning("Request Details:")
+                    logger.warning(f"Method: {request.method}")
+                    logger.warning(f"Path: {path}")
+                    logger.warning(f"Query: {query}")
+                    logger.warning(f"Body: {request.body}")
+                    logger.warning(f"IP: {request.ip}")
+                    if new_rule_name:
+                        logger.warning(f"Generated Rule: {new_rule_name}")
+                    logger.warning("=" * 50)
 
-                # Create analysis data from the request fields
-                analysis_data = {
-                    'timestamp': request.timestamp,
-                    'type': request.type,
-                    'ip': request.ip,
-                    'method': request.method,
-                    'path': path,
-                    'query': query,  # Add query field
-                    'headers': dict(request.headers),
-                    'body': request.body if request.body else '',
-                    'client_id': request.client_id
-                }
-
-                logger.info(f"Request data: {json.dumps(analysis_data, indent=2)}")
-
-                # Rest of your code...
-
-                # Run rule engine checks
-                matched_rule = self.rule_engine.check_rules(analysis_data)
-                if matched_rule:
-                    message = f"⚠️  Rule '{matched_rule}' matched"
-                    logger.warning(f"RULES RESPONSE: {message}")
-                    logger.info("FINAL DECISION = ATTACK DETECTED")
                     return ids_pb2.ProcessResult(
                         injection_detected=True,
-                        message=message,
-                        matched_rules=[matched_rule]
+                        message=f"🤖 ML model detected anomaly" +
+                                (f". Generated rule: {new_rule_name}" if new_rule_name else ""),
+                        matched_rules=[new_rule_name] if new_rule_name else []
                     )
-
-                # If no rule matches, use ML analysis
-                logger.info("SENT TO ML...")
-                try:
-                    is_anomaly = self.rule_engine.predict_anomaly(analysis_data)
-                    if is_anomaly:
-                        new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
-                        message = f"🤖 ML model detected anomaly" + (
-                            f". Generated rule: {new_rule_name}" if new_rule_name else "")
-                        logger.warning(f"ML RESPONSE: {message}")
-                        logger.info("FINAL DECISION = ATTACK DETECTED")
-                        return ids_pb2.ProcessResult(
-                            injection_detected=True,
-                            message=message,
-                            matched_rules=[new_rule_name] if new_rule_name else []
-                        )
-                    else:
-                        message = "✅ No anomalies detected"
-                        logger.info(f"ML RESPONSE: {message}")
-                        logger.info("FINAL DECISION = NO ATTACK DETECTED")
-                        return ids_pb2.ProcessResult(
-                            injection_detected=False,
-                            message=message,
-                            matched_rules=[]
-                        )
-                except Exception as e:
-                    message = f"Request processed (ML error: {str(e)})"
-                    logger.error(f"ML RESPONSE: Error in analysis")
-                    logger.info("FINAL DECISION = ERROR IN PROCESSING")
+                else:
+                    # Minimal logging for normal requests
+                    logger.info(f"Normal request: {request.method} {path}")
                     return ids_pb2.ProcessResult(
                         injection_detected=False,
-                        message=message,
+                        message="✅ No anomalies detected",
                         matched_rules=[]
                     )
-
             except Exception as e:
-                message = f"Error processing request: {str(e)}"
-                logger.error(f"Error: {message}")
-                logger.info("FINAL DECISION = ERROR IN PROCESSING")
+                logger.error(f"ML analysis error: {str(e)}")
                 return ids_pb2.ProcessResult(
                     injection_detected=False,
-                    message=message,
+                    message=f"Request processed (ML error: {str(e)})",
                     matched_rules=[]
                 )
-        else:
-            message = "Request processed (no analysis required)"
-            logger.info(f"FINAL DECISION = {message}")
+
+        except Exception as e:
+            logger.error(f"Request processing error: {str(e)}")
             return ids_pb2.ProcessResult(
                 injection_detected=False,
-                message=message,
+                message=f"Error processing request: {str(e)}",
                 matched_rules=[]
             )
 

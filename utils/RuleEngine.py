@@ -125,46 +125,19 @@ class RuleEngine:
         return features
 
     def predict_anomaly(self, data):
+        """Predict if request is anomalous with streamlined logging."""
         if self.ml_model is None or self.vectorizer is None:
             raise ValueError("ML model or vectorizer not loaded")
 
         try:
-            logger.info("\nPrediction Process:")
             path = data.get('path', '')
             query = data.get('query', '')
-            logger.info(f"Using path for vectorization: {path}")
 
             X = self.extract_features(data)
-
-            critical_patterns = {
-                'sql_injection': r'(\b|;)(select|drop|update|delete|insert|alter|union)\b',
-                'path_traversal': r'\.\.\/|\/etc\/|\/var\/|\/root\/',
-                'rfi': r'https?:\/\/|file:\/\/|ftp:\/\/',
-                'command_injection': r';\s*\w+|\|\s*\w+|\`.*\`',
-                'xss': r'<[^>]*>|javascript:|data:|alert\s*\(|eval\s*\('
-            }
-
-            attack_matches = {}
-            for attack_type, pattern in critical_patterns.items():
-                match_in_query = bool(re.search(pattern, query.lower()))
-                match_in_path = bool(re.search(pattern, path.lower()))
-                match_in_body = bool(re.search(pattern, data.get('body', '').lower()))
-                attack_matches[attack_type] = match_in_query or match_in_path or match_in_body
-
-            logger.info("Attack Pattern Matches:")
-            for attack_type, matched in attack_matches.items():
-                logger.info(f"{attack_type}: {matched}")
-
-            if any(attack_matches.values()):
-                logger.info("Critical attack pattern detected!")
-                return True
-
             path_features = self.vectorizer.transform([path])
-            logger.info(f"Path features generated with shape: {path_features.shape}")
 
             if self.preprocessor:
                 X_preprocessed = self.preprocessor.transform(X)
-                logger.info(f"Preprocessed features shape: {X_preprocessed.shape}")
 
                 if issparse(X_preprocessed):
                     X_preprocessed = X_preprocessed.toarray()
@@ -172,32 +145,34 @@ class RuleEngine:
                     path_features = path_features.toarray()
 
                 X_combined = np.hstack((X_preprocessed, path_features))
-                logger.info(f"Combined feature shape: {X_combined.shape}")
 
                 # Make prediction with probability
                 prediction_proba = self.ml_model.predict_proba(X_combined)
                 attack_probability = prediction_proba[0][1]
 
-                logger.info(f"Attack probability from ML: {attack_probability}")
-
-                # Use different thresholds based on feature presence
+                # Determine threshold
                 has_query = X['has_query'].iloc[0] == 1
                 has_suspicious_content = (X['has_sql_keywords'].iloc[0] == 1 or
                                           X['has_script_tags'].iloc[0] == 1)
-
-                # Lower threshold if request has suspicious characteristics
                 threshold = 0.3 if (has_query or has_suspicious_content) else 0.5
 
-                logger.info(f"Using threshold: {threshold} (adjusted based on request characteristics)")
-                final_prediction = attack_probability > threshold
+                # Only log details if it's an attack
+                is_attack = attack_probability > threshold
+                if is_attack:
+                    logger.warning("\n=== ML Detection Details ===")
+                    logger.warning(f"Attack Probability: {attack_probability:.3f}")
+                    logger.warning(f"Threshold Used: {threshold}")
+                    logger.warning(f"SQL Keywords: {X['has_sql_keywords'].iloc[0]}")
+                    logger.warning(f"Script Tags: {X['has_script_tags'].iloc[0]}")
+                    logger.warning(f"Query Present: {has_query}")
+                    logger.warning("=" * 50)
 
-                logger.info(f"Final prediction: {final_prediction}")
-                return bool(final_prediction)
+                return is_attack
+
             else:
                 raise ValueError("Preprocessor not loaded")
 
         except Exception as e:
-            logger.error(f"Error in predict_anomaly: {str(e)}")
             raise
 
     def generate_rule_from_anomaly(self, data):
