@@ -59,8 +59,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             if matched_rule:
                 logger.warning(f"🚨 Attack detected (Rule: {matched_rule})")
                 logger.warning(f"Request: {request.method} {path}?{query}")
-                if request.body:
-                    logger.warning(f"Body: {request.body}")
+                logger.warning(f"Body: {request.body if request.body is not None else '<empty>'}")
 
                 return ids_pb2.ProcessResult(
                     injection_detected=True,
@@ -76,8 +75,8 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
 
                     logger.warning(f"\n🚨 Attack detected (ML confidence: {confidence:.2f})")
                     logger.warning(f"Request: {request.method} {path}?{query}")
-                    if request.body:
-                        logger.warning(f"Body: {request.body}")
+                    logger.warning(
+                        f"Body: {request.body if request.body is not None else '<empty>'}")  # Changed this line
                     if new_rule_name:
                         logger.warning(f"Generated rule: {new_rule_name}")
 
