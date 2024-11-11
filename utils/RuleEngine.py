@@ -150,41 +150,36 @@ class RuleEngine:
     def generate_rule_from_anomaly(self, data):
         """Generate rules based purely on ML model's detection."""
         try:
-            # Get features that contributed to the ML decision
+            # Get ML features and vectorizer information
             features = self.extract_features(data)
+            path = data.get('path', '')
+            query = data.get('query', '')
 
+            logger.info(f"Generating rules for detected attack - Path: {path}, Query: {query}")
             rules_to_generate = []
 
-            # Check which features contributed to the detection
-            if features['has_sql_keywords'].iloc[0] == 1:
-                pattern = self.extract_pattern_from_content(
-                    data.get('query', ''),
-                    data.get('body', ''),
-                    base_pattern=r'(select|insert|update|delete|union).*'
-                )
-                if pattern:
-                    rules_to_generate.append(('query', pattern))
+            # If query parameters exist and contributed to detection, create a query rule
+            if query and features['has_query'].iloc[0] == 1:
+                # Create pattern from the actual query that triggered detection
+                query_pattern = re.escape(query)  # Escape special characters
+                rules_to_generate.append(('query', query_pattern))
+                logger.info(f"Generated query pattern: {query_pattern}")
 
-            if features['has_script_tags'].iloc[0] == 1:
-                pattern = self.extract_pattern_from_content(
-                    data.get('query', ''),
-                    data.get('body', ''),
-                    base_pattern=r'(<script.*?>|javascript:.*|data:.*)'
-                )
-                if pattern:
-                    rules_to_generate.append(('body', pattern))
-
-            # Generate rules based on path if it contributed to detection
-            path_features = self.vectorizer.transform([data.get('path', '')])
-            if path_features.getnnz() > 0:  # If path had significant features
-                pattern = self.extract_pattern_from_path(data.get('path', ''))
-                if pattern:
-                    rules_to_generate.append(('path', pattern))
+            # Create path rule based on vectorizer features
+            path_features = self.vectorizer.transform([path])
+            if path_features.getnnz() > 0:
+                # Get the parts of the path that triggered ML detection
+                feature_indices = path_features.nonzero()[1]
+                if len(feature_indices) > 0:
+                    path_pattern = f"^{re.escape(path)}$"  # Exact path match
+                    rules_to_generate.append(('path', path_pattern))
+                    logger.info(f"Generated path pattern: {path_pattern}")
 
             # Create and store rules
             created_rules = []
             for field, pattern in rules_to_generate:
                 name = f"ML_Generated_Rule_{field}_{len(self.rules)}"
+                logger.info(f"Creating new rule - Name: {name}, Field: {field}, Pattern: {pattern}")
                 rule_id = self.add_rule(
                     name=name,
                     pattern=pattern,
