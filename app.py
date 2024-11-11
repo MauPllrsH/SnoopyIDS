@@ -23,10 +23,29 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
 
         mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
 
-        # Initialize MongoDB client for logging
-        self.mongo_client = MongoClient(mongo_url)
-        self.db = self.mongo_client[mongo_database]
+        logger.info("Connecting to MongoDB...")
+        logger.info(f"Database: {mongo_database}")
         
+        # Initialize MongoDB client for logging
+        try:
+            self.mongo_client = MongoClient(mongo_url)
+            self.db = self.mongo_client[mongo_database]
+            
+            # Explicitly create logs collection if it doesn't exist
+            if 'logs' not in self.db.list_collection_names():
+                logger.info("Creating logs collection...")
+                self.db.create_collection('logs')
+            else:
+                logger.info("Logs collection already exists")
+                
+            # Test the connection with a simple operation
+            self.db.logs.find_one()
+            logger.info("Successfully connected to MongoDB")
+            
+        except Exception as e:
+            logger.error(f"MongoDB connection error: {str(e)}")
+            raise e
+
         # Initialize RuleEngine as before
         self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
         self.rule_engine.load_rules()
@@ -55,10 +74,20 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     'matched_rules': matched_rules if matched_rules else []
                 }
             }
-            self.db.logs.insert_one(log_entry)
+            result = self.db.logs.insert_one(log_entry)
+            logger.info(f"Log entry stored with ID: {result.inserted_id}")
+            
+            # Verify the entry was stored
+            stored_entry = self.db.logs.find_one({'_id': result.inserted_id})
+            if stored_entry:
+                logger.info("Successfully verified log entry storage")
+            else:
+                logger.error("Failed to verify log entry storage")
+                
         except Exception as e:
             logger.error(f"Failed to store log in MongoDB: {str(e)}")
-
+            logger.exception("Full traceback:")
+            
     def ProcessLog(self, request, context):
         """Process incoming log requests with minimal logging."""
         try:
