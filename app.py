@@ -57,7 +57,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             # Check rules first
             matched_rule = self.rule_engine.check_rules(analysis_data)
             if matched_rule:
-                logger.warning(f"\n🚨 Attack detected (Rule: {matched_rule})")
+                logger.warning(f"🚨 Attack detected (Rule: {matched_rule})")
                 logger.warning(f"Request: {request.method} {path}?{query}")
                 if request.body:
                     logger.warning(f"Body: {request.body}")
