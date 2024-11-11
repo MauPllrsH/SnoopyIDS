@@ -82,9 +82,6 @@ class RuleEngine:
     def extract_features(self, data):
         # Convert single request to DataFrame
         df = pd.DataFrame([data])
-        logger.info(f"Input data for feature extraction: {json.dumps(data, indent=2)}")
-        logger.info(f"Input path: {data.get('path', '')}")
-        logger.info(f"Input query: {data.get('query', '')}")
 
         # Enhanced attack detection patterns
         sql_pattern = r'select|from|where|union|insert|update|delete|drop|exec|system'
