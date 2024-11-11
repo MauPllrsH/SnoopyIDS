@@ -9,8 +9,6 @@ from bson.objectid import ObjectId
 from utils.logger_config import logger
 
 from utils.Rule import Rule
-from utils.CustomLabelEncoder import CustomLabelEncoder
-
 
 
 class RuleEngine:
@@ -61,7 +59,7 @@ class RuleEngine:
         self.collection.delete_one({'_id': ObjectId(rule_id)})
         self.load_rules()
 
-    def load_ml_model(self, model_path, vectorizer_path, preprocessor_path=None, label_encoder_path=None):
+    def load_ml_model(self, model_path, vectorizer_path, preprocessor_path=None):
         try:
             # Load model info first
             model_info = joblib.load(model_path)
@@ -138,7 +136,6 @@ class RuleEngine:
 
             X = self.extract_features(data)
 
-            # Define critical attack patterns
             critical_patterns = {
                 'sql_injection': r'(\b|;)(select|drop|update|delete|insert|alter|union)\b',
                 'path_traversal': r'\.\.\/|\/etc\/|\/var\/|\/root\/',
@@ -147,7 +144,6 @@ class RuleEngine:
                 'xss': r'<[^>]*>|javascript:|data:|alert\s*\(|eval\s*\('
             }
 
-            # Check for critical patterns
             attack_matches = {}
             for attack_type, pattern in critical_patterns.items():
                 match_in_query = bool(re.search(pattern, query.lower()))
@@ -159,12 +155,10 @@ class RuleEngine:
             for attack_type, matched in attack_matches.items():
                 logger.info(f"{attack_type}: {matched}")
 
-            # If any critical pattern matches, it's definitely an attack
             if any(attack_matches.values()):
                 logger.info("Critical attack pattern detected!")
                 return True
 
-            # If no critical patterns, proceed with ML prediction
             path_features = self.vectorizer.transform([path])
             logger.info(f"Path features generated with shape: {path_features.shape}")
 
@@ -207,24 +201,97 @@ class RuleEngine:
             raise
 
     def generate_rule_from_anomaly(self, data):
-        # Enhanced rule generation
-        suspicious_patterns = []
+        """Generate rules based purely on ML model's detection."""
+        try:
+            # Get features that contributed to the ML decision
+            features = self.extract_features(data)
 
-        # Check path for suspicious patterns
-        if 'path' in data and data['path']:
-            if any(keyword in data['path'].lower() for keyword in ['admin', 'shell', 'exec', 'eval']):
-                suspicious_patterns.append(('path', data['path']))
+            rules_to_generate = []
 
-        # Check body for suspicious patterns
-        if data.get('body'):
-            if any(keyword in str(data['body']).lower() for keyword in ['script', 'select', 'union', 'delete']):
-                suspicious_patterns.append(('body', str(data['body'])))
+            # Check which features contributed to the detection
+            if features['has_sql_keywords'].iloc[0] == 1:
+                pattern = self._extract_pattern_from_content(
+                    data.get('query', ''),
+                    data.get('body', ''),
+                    r'(select|insert|update|delete|union).*'
+                )
+                if pattern:
+                    rules_to_generate.append(('query', pattern))
 
-        # Generate rules for suspicious patterns
-        for field, value in suspicious_patterns:
-            pattern = re.escape(value)
-            name = f"ML_Generated_Rule_{field}_{len(self.rules)}"
-            self.add_rule(name, pattern, field)
-            return name
+            if features['has_script_tags'].iloc[0] == 1:
+                pattern = self._extract_pattern_from_content(
+                    data.get('query', ''),
+                    data.get('body', ''),
+                    r'(<script.*?>|javascript:.*|data:.*)'
+                )
+                if pattern:
+                    rules_to_generate.append(('body', pattern))
 
+            # Generate rules based on path if it contributed to detection
+            path_features = self.vectorizer.transform([data.get('path', '')])
+            if path_features.getnnz() > 0:  # If path had significant features
+                pattern = self._extract_pattern_from_path(data.get('path', ''))
+                if pattern:
+                    rules_to_generate.append(('path', pattern))
+
+            # Create and store rules
+            created_rules = []
+            for field, pattern in rules_to_generate:
+                name = f"ML_Generated_Rule_{field}_{len(self.rules)}"
+                rule_id = self.add_rule(
+                    name=name,
+                    pattern=pattern,
+                    field=field
+                )
+                created_rules.append(name)
+
+            return created_rules[0] if created_rules else None
+
+        except Exception as e:
+            logger.error(f"Error generating rules from anomaly: {str(e)}")
+            return None
+
+    def _extract_pattern_from_content(self, *contents, base_pattern):
+        """Extract patterns from content that matched ML features."""
+        for content in contents:
+            if not content:
+                continue
+            content = str(content).lower()
+            match = re.search(base_pattern, content)
+            if match:
+                # Extract the matched pattern and its immediate context
+                start = max(0, match.start() - 10)
+                end = min(len(content), match.end() + 10)
+                context = content[start:end]
+                # Escape special characters but keep the pattern structure
+                return re.escape(context).replace('\\s+', '\\s+')
         return None
+
+    def _extract_pattern_from_path(self, path):
+        """Extract suspicious patterns from path based on ML vectorizer."""
+        if not path:
+            return None
+
+        # Get the most important path segments according to vectorizer
+        path_features = self.vectorizer.transform([path])
+        if path_features.getnnz() == 0:
+            return None
+
+        # Get feature names that were activated
+        feature_indices = path_features.nonzero()[1]
+        if len(feature_indices) == 0:
+            return None
+
+        important_features = [self.feature_names[i] for i in feature_indices]
+
+        # Create a pattern that matches the path structure
+        path_parts = path.split('/')
+        pattern_parts = []
+
+        for part in path_parts:
+            if any(feature in part.lower() for feature in important_features):
+                pattern_parts.append(re.escape(part))
+            else:
+                pattern_parts.append('[^/]+')
+
+        return '/'.join(pattern_parts)
