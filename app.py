@@ -1,6 +1,13 @@
-# Debug prints at the very start
-print("Starting application...")
+import sys
 
+def log_exception(e):
+    print(f"Exception occurred: {str(e)}", file=sys.stderr)
+    print("Exception type:", type(e), file=sys.stderr)
+    print("Exception traceback:", file=sys.stderr)
+    import traceback
+    traceback.print_exc()
+
+print("Starting application...")
 try:
     print("Importing modules...")
     import json
@@ -20,51 +27,61 @@ try:
     load_dotenv()
     print("Environment variables loaded")
 
+    # Test environment variables
+    required_vars = ['MONGO_USER', 'MONGO_PASSWORD', 'MONGO_PORT', 'MONGO_DATABASE']
+    for var in required_vars:
+        value = os.getenv(var)
+        print(f"{var}: {'Present' if value else 'Missing'}")
+
 except Exception as e:
-    print(f"Error during imports: {str(e)}")
+    log_exception(e)
     raise e
 
 
 class IDSServicer(ids_pb2_grpc.IDSServicer):
     def __init__(self):
-        mongo_user = quote_plus(os.getenv('MONGO_USER'))
-        mongo_password = quote_plus(os.getenv('MONGO_PASSWORD'))
-        mongo_port = os.getenv('MONGO_PORT')
-        mongo_database = os.getenv('MONGO_DATABASE')
-
-        mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
-
-        logger.info("Connecting to MongoDB...")
-        logger.info(f"Database: {mongo_database}")
-        
-        # Initialize MongoDB client for logging
         try:
+            print("Initializing IDSServicer...")
+            mongo_user = quote_plus(os.getenv('MONGO_USER'))
+            mongo_password = quote_plus(os.getenv('MONGO_PASSWORD'))
+            mongo_port = os.getenv('MONGO_PORT')
+            mongo_database = os.getenv('MONGO_DATABASE')
+
+            mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
+            print(f"Connecting to MongoDB at: {mongo_url}")
+
             self.mongo_client = MongoClient(mongo_url)
             self.db = self.mongo_client[mongo_database]
-            
-            # Explicitly create logs collection if it doesn't exist
-            if 'logs' not in self.db.list_collection_names():
-                logger.info("Creating logs collection...")
-                self.db.create_collection('logs')
-            else:
-                logger.info("Logs collection already exists")
-                
-            # Test the connection with a simple operation
-            self.db.logs.find_one()
-            logger.info("Successfully connected to MongoDB")
-            
-        except Exception as e:
-            logger.error(f"MongoDB connection error: {str(e)}")
-            raise e
+            print("MongoDB client created")
 
-        # Initialize RuleEngine as before
-        self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
-        self.rule_engine.load_rules()
-        self.rule_engine.load_ml_model(
-            model_path='models/model_info.joblib',
-            vectorizer_path='models/vectorizer.joblib',
-            preprocessor_path='models/preprocessor.joblib',
-        )
+            # Test the MongoDB connection
+            collections = self.db.list_collection_names()
+            print(f"Available collections: {collections}")
+
+            # Create logs collection if it doesn't exist
+            if 'logs' not in collections:
+                print("Creating logs collection...")
+                self.db.create_collection('logs')
+                print("Logs collection created")
+            else:
+                print("Logs collection already exists")
+
+            # Initialize RuleEngine
+            print("Initializing RuleEngine...")
+            self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
+            self.rule_engine.load_rules()
+            print("Rules loaded")
+            
+            self.rule_engine.load_ml_model(
+                model_path='models/model_info.joblib',
+                vectorizer_path='models/vectorizer.joblib',
+                preprocessor_path='models/preprocessor.joblib',
+            )
+            print("ML model loaded")
+
+        except Exception as e:
+            log_exception(e)
+            raise e
 
     def store_log_entry(self, analysis_data, is_attack, message, matched_rules=None):
         """Helper method to store log entries in MongoDB"""
@@ -201,3 +218,44 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
 
     def HealthCheck(self, request, context):
         return ids_pb2.HealthCheckResponse(is_healthy=True)
+    
+def serve():
+    try:
+        print("Starting server...")
+        # Load SSL/TLS certificates
+        with open('certs/server.key', 'rb') as f:
+            private_key = f.read()
+        with open('certs/server.crt', 'rb') as f:
+            certificate_chain = f.read()
+        with open('certs/ca.crt', 'rb') as f:
+            root_certificates = f.read()
+        print("Certificates loaded")
+
+        server_credentials = grpc.ssl_server_credentials(
+            [(private_key, certificate_chain)],
+            root_certificates=root_certificates,
+            require_client_auth=True
+        )
+
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
+        
+        server_address = '0.0.0.0:50051'
+        server.add_secure_port(server_address, server_credentials)
+        print("Server configured")
+
+        server.start()
+        print("Server started successfully")
+        
+        server.wait_for_termination()
+        
+    except Exception as e:
+        log_exception(e)
+        raise e
+
+if __name__ == '__main__':
+    try:
+        serve()
+    except Exception as e:
+        log_exception(e)
+        sys.exit(1)
