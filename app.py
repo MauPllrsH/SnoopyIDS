@@ -32,7 +32,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
         )
 
     def ProcessLog(self, request, context):
-        """Process incoming log requests with streamlined logging."""
+        """Process incoming log requests with minimal logging."""
         try:
             # Split path and query
             path = request.path
@@ -56,15 +56,10 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             # Check rules first
             matched_rule = self.rule_engine.check_rules(analysis_data)
             if matched_rule:
-                logger.warning("\n=== ATTACK DETECTED (Rule Match) ===")
-                logger.warning(f"Rule: {matched_rule}")
-                logger.warning("Request Details:")
-                logger.warning(f"Method: {request.method}")
-                logger.warning(f"Path: {path}")
-                logger.warning(f"Query: {query}")
-                logger.warning(f"Body: {request.body}")
-                logger.warning(f"IP: {request.ip}")
-                logger.warning("=" * 50)
+                logger.warning(f"\n🚨 Attack detected (Rule: {matched_rule})")
+                logger.warning(f"Request: {request.method} {path}?{query}")
+                if request.body:
+                    logger.warning(f"Body: {request.body}")
 
                 return ids_pb2.ProcessResult(
                     injection_detected=True,
@@ -74,20 +69,16 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
 
             # If no rule matches, use ML analysis
             try:
-                is_anomaly = self.rule_engine.predict_anomaly(analysis_data)
+                is_anomaly, confidence = self.rule_engine.predict_anomaly(analysis_data)
                 if is_anomaly:
                     new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
 
-                    logger.warning("\n=== ATTACK DETECTED (ML Model) ===")
-                    logger.warning("Request Details:")
-                    logger.warning(f"Method: {request.method}")
-                    logger.warning(f"Path: {path}")
-                    logger.warning(f"Query: {query}")
-                    logger.warning(f"Body: {request.body}")
-                    logger.warning(f"IP: {request.ip}")
+                    logger.warning(f"\n🚨 Attack detected (ML confidence: {confidence:.2f})")
+                    logger.warning(f"Request: {request.method} {path}?{query}")
+                    if request.body:
+                        logger.warning(f"Body: {request.body}")
                     if new_rule_name:
-                        logger.warning(f"Generated Rule: {new_rule_name}")
-                    logger.warning("=" * 50)
+                        logger.warning(f"Generated rule: {new_rule_name}")
 
                     return ids_pb2.ProcessResult(
                         injection_detected=True,
@@ -97,10 +88,10 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     )
                 else:
                     # Minimal logging for normal requests
-                    logger.info(f"Normal request: {request.method} {path}")
+                    logger.info(f"✅ {request.method} {path}")
                     return ids_pb2.ProcessResult(
                         injection_detected=False,
-                        message="✅ No anomalies detected",
+                        message="No anomalies detected",
                         matched_rules=[]
                     )
             except Exception as e:

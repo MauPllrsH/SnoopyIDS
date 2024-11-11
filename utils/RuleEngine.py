@@ -125,16 +125,13 @@ class RuleEngine:
         return features
 
     def predict_anomaly(self, data):
-        """Predict if request is anomalous with streamlined logging."""
+        """Predict if request is anomalous with minimal logging."""
         if self.ml_model is None or self.vectorizer is None:
             raise ValueError("ML model or vectorizer not loaded")
 
         try:
-            path = data.get('path', '')
-            query = data.get('query', '')
-
             X = self.extract_features(data)
-            path_features = self.vectorizer.transform([path])
+            path_features = self.vectorizer.transform([data.get('path', '')])
 
             if self.preprocessor:
                 X_preprocessed = self.preprocessor.transform(X)
@@ -145,8 +142,6 @@ class RuleEngine:
                     path_features = path_features.toarray()
 
                 X_combined = np.hstack((X_preprocessed, path_features))
-
-                # Make prediction with probability
                 prediction_proba = self.ml_model.predict_proba(X_combined)
                 attack_probability = prediction_proba[0][1]
 
@@ -156,18 +151,7 @@ class RuleEngine:
                                           X['has_script_tags'].iloc[0] == 1)
                 threshold = 0.3 if (has_query or has_suspicious_content) else 0.5
 
-                # Only log details if it's an attack
-                is_attack = attack_probability > threshold
-                if is_attack:
-                    logger.warning("\n=== ML Detection Details ===")
-                    logger.warning(f"Attack Probability: {attack_probability:.3f}")
-                    logger.warning(f"Threshold Used: {threshold}")
-                    logger.warning(f"SQL Keywords: {X['has_sql_keywords'].iloc[0]}")
-                    logger.warning(f"Script Tags: {X['has_script_tags'].iloc[0]}")
-                    logger.warning(f"Query Present: {has_query}")
-                    logger.warning("=" * 50)
-
-                return is_attack
+                return attack_probability > threshold, attack_probability
 
             else:
                 raise ValueError("Preprocessor not loaded")
