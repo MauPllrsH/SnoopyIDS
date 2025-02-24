@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package ids;
+package waf;
 
-service IDS {
+service WAF {
     rpc ProcessLog (LogEntry) returns (ProcessResult) {}
     rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse) {}
     // New RPC to get/set prevention mode
