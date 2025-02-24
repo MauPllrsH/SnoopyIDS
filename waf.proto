@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package ids;
+
+service IDS {
+    rpc ProcessLog (LogEntry) returns (ProcessResult) {}
+    rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse) {}
+    // New RPC to get/set prevention mode
+    rpc GetPreventionMode (PreventionModeRequest) returns (PreventionModeResponse) {}
+    rpc SetPreventionMode (SetPreventionModeRequest) returns (PreventionModeResponse) {}
+}
+
+message LogEntry {
+    string timestamp = 1;
+    string type = 2;
+    string ip = 3;
+    string method = 4;
+    string path = 5;
+    map<string, string> headers = 6;
+    string body = 7;
+    string client_id = 8;
+}
+
+message ProcessResult {
+    bool injection_detected = 1;
+    string message = 2;
+    repeated string matched_rules = 3;
+    // New field for prevention decision
+    bool should_block = 4;
+}
+
+message HealthCheckRequest {
+    string client_id = 1;
+}
+
+message HealthCheckResponse {
+    bool is_healthy = 1;
+}
+
+// New messages for prevention mode
+message PreventionModeRequest {
+    string client_id = 1;
+}
+
+message SetPreventionModeRequest {
+    string client_id = 1;
+    bool enabled = 2;
+}
+
+message PreventionModeResponse {
+    bool enabled = 1;
+}

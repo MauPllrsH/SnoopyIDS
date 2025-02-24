@@ -16,8 +16,8 @@ try:
     from dotenv import load_dotenv
     from concurrent import futures
     from utils.RuleEngine import RuleEngine
-    import ids_pb2
-    import ids_pb2_grpc
+    import waf_pb2
+    import waf_pb2_grpc
     from urllib.parse import quote_plus
     from datetime import datetime
     from utils.logger_config import logger
@@ -38,10 +38,10 @@ except Exception as e:
     raise e
 
 
-class IDSServicer(ids_pb2_grpc.IDSServicer):
+class WAFServicer(waf_pb2_grpc.WAFServicer):
     def __init__(self):
         try:
-            print("Initializing IDSServicer...")
+            print("Initializing WAFServicer...")
             mongo_user = quote_plus(os.getenv('MONGO_USER'))
             mongo_password = quote_plus(os.getenv('MONGO_PASSWORD'))
             mongo_port = os.getenv('MONGO_PORT')
@@ -66,12 +66,26 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             else:
                 print("Logs collection already exists")
 
+            # Add prevention mode state and collection
+            self.prevention_mode = False
+            if 'config' not in collections:
+                print("Creating config collection...")
+                self.db.create_collection('config')
+                self.db.config.insert_one({'key': 'prevention_mode', 'enabled': False})
+                print("Config collection created")
+            else:
+                # Load prevention mode state from MongoDB
+                config = self.db.config.find_one({'key': 'prevention_mode'})
+                if config:
+                    self.prevention_mode = config['enabled']
+                    print(f"Prevention mode loaded: {self.prevention_mode}")
+
             # Initialize RuleEngine
             print("Initializing RuleEngine...")
             self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
             self.rule_engine.load_rules()
             print("Rules loaded")
-            
+
             self.rule_engine.load_ml_model(
                 model_path='models/model_info.joblib',
                 vectorizer_path='models/vectorizer.joblib',
@@ -138,7 +152,7 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 'client_id': request.client_id
             }
 
-            logger.info("=========== New Request Receieved =============")
+            logger.info("=========== New Request Received =============")
             # Check rules first
             matched_rule = self.rule_engine.check_rules(analysis_data)
             if matched_rule:
@@ -150,10 +164,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 # Store attack log
                 self.store_log_entry(analysis_data, True, message, [matched_rule])
 
-                return ids_pb2.ProcessResult(
+                return waf_pb2.ProcessResult(
                     injection_detected=True,
                     message=message,
-                    matched_rules=[matched_rule]
+                    matched_rules=[matched_rule],
+                    should_block=self.prevention_mode  # Add blocking decision
                 )
 
             # If no rule matches, use ML analysis
@@ -161,7 +176,8 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 is_anomaly, confidence = self.rule_engine.predict_anomaly(analysis_data)
                 if is_anomaly:
                     new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
-                    message = f"🤖 ML model detected anomaly" + (f". Generated rule: {new_rule_name}" if new_rule_name else "")
+                    message = f"🤖 ML model detected anomaly" + (
+                        f". Generated rule: {new_rule_name}" if new_rule_name else "")
 
                     logger.warning(f"\n🚨 Attack detected (ML confidence: {confidence:.2f})")
                     logger.warning(f"Request: {request.method} {path}?{query}")
@@ -172,10 +188,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     # Store ML-detected attack log
                     self.store_log_entry(analysis_data, True, message, [new_rule_name] if new_rule_name else [])
 
-                    return ids_pb2.ProcessResult(
+                    return waf_pb2.ProcessResult(
                         injection_detected=True,
                         message=message,
-                        matched_rules=[new_rule_name] if new_rule_name else []
+                        matched_rules=[new_rule_name] if new_rule_name else [],
+                        should_block=self.prevention_mode  # Add blocking decision
                     )
                 else:
                     message = "No anomalies detected"
@@ -184,10 +201,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     # Store normal request log
                     self.store_log_entry(analysis_data, False, message)
 
-                    return ids_pb2.ProcessResult(
+                    return waf_pb2.ProcessResult(
                         injection_detected=False,
                         message=message,
-                        matched_rules=[]
+                        matched_rules=[],
+                        should_block=False
                     )
             except Exception as e:
                 message = f"Request processed (ML error: {str(e)})"
@@ -196,29 +214,40 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 # Store error log
                 self.store_log_entry(analysis_data, False, message)
 
-                return ids_pb2.ProcessResult(
+                return waf_pb2.ProcessResult(
                     injection_detected=False,
                     message=message,
-                    matched_rules=[]
+                    matched_rules=[],
+                    should_block=False
                 )
 
         except Exception as e:
             message = f"Error processing request: {str(e)}"
             logger.error(f"Request processing error: {str(e)}")
 
-            # Store error log if we have analysis_data
-            if 'analysis_data' in locals():
-                self.store_log_entry(analysis_data, False, message)
-
-            return ids_pb2.ProcessResult(
+            return waf_pb2.ProcessResult(
                 injection_detected=False,
                 message=message,
-                matched_rules=[]
+                matched_rules=[],
+                should_block=False
             )
 
+    def GetPreventionMode(self, request, context):
+        return waf_pb2.PreventionModeResponse(enabled=self.prevention_mode)
+
+    def SetPreventionMode(self, request, context):
+        self.prevention_mode = request.enabled
+        # Update MongoDB
+        self.db.config.update_one(
+            {'key': 'prevention_mode'},
+            {'$set': {'enabled': request.enabled}},
+            upsert=True
+        )
+        return waf_pb2.PreventionModeResponse(enabled=self.prevention_mode)
+
     def HealthCheck(self, request, context):
-        return ids_pb2.HealthCheckResponse(is_healthy=True)
-    
+        return waf_pb2.HealthCheckResponse(is_healthy=True)
+
 def serve():
     try:
         print("Starting server...")
@@ -238,7 +267,7 @@ def serve():
         )
 
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
+        waf_pb2_grpc.add_WAFServicer_to_server(WAFServicer(), server)
         
         server_address = '0.0.0.0:50051'
         server.add_secure_port(server_address, server_credentials)
