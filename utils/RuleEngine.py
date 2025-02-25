@@ -1,12 +1,15 @@
 import re
+import os
+import sys
 import pandas as pd
 import numpy as np
 from scipy.sparse import issparse
+from scipy.stats import entropy
 import joblib
+import traceback
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from utils.logger_config import logger
-import os
 
 from utils.Rule import Rule
 
@@ -393,9 +396,19 @@ class RuleEngine:
                 # Call the standalone prediction function
                 try:
                     # Try using the standalone function first
-                    is_attack, confidence = self.predict_function(data_df, model_components)
-                    logger.debug(f"Standalone prediction: {is_attack} with confidence {confidence:.4f}")
-                    return is_attack, confidence
+                    try:
+                        is_attack, confidence = self.predict_function(data_df, model_components)
+                        logger.debug(f"Standalone prediction: {is_attack} with confidence {confidence:.4f}")
+                        return is_attack, confidence
+                    except ValueError as ve:
+                        # Handle feature count mismatch errors specifically
+                        if "features, but" in str(ve) or "expects" in str(ve) and "features" in str(ve):
+                            logger.error(f"Feature count mismatch in standalone prediction: {str(ve)}")
+                            # Continue to fallback code
+                            raise Exception(f"Feature count mismatch: {str(ve)}")
+                        else:
+                            # Re-raise other value errors
+                            raise
                 except Exception as e:
                     logger.error(f"Error in standalone prediction: {str(e)}")
                     logger.warning("Trying built-in prediction as fallback")
@@ -422,12 +435,48 @@ class RuleEngine:
                                         
                                     X_combined = np.hstack((X_preprocessed, path_features))
                                     
+                                    # Check for feature count mismatch and handle it
+                                    expected_feature_count = 0
+                                    try:
+                                        # Try to get expected feature count from the model
+                                        if hasattr(actual_model, 'n_features_in_'):
+                                            expected_feature_count = actual_model.n_features_in_
+                                        elif hasattr(actual_model, 'estimators_') and len(actual_model.estimators_) > 0:
+                                            # For ensemble models
+                                            if hasattr(actual_model.estimators_[0], 'n_features_in_'):
+                                                expected_feature_count = actual_model.estimators_[0].n_features_in_
+                                                
+                                        logger.debug(f"Model expects {expected_feature_count} features, got {X_combined.shape[1]}")
+                                        
+                                        # Handle feature count mismatch
+                                        if expected_feature_count > 0 and X_combined.shape[1] != expected_feature_count:
+                                            # If too few features, pad with zeros
+                                            if X_combined.shape[1] < expected_feature_count:
+                                                padding = np.zeros((X_combined.shape[0], expected_feature_count - X_combined.shape[1]))
+                                                X_combined = np.hstack((X_combined, padding))
+                                                logger.warning(f"Added padding to match feature count: {X_combined.shape[1]}")
+                                            # If too many features, truncate
+                                            elif X_combined.shape[1] > expected_feature_count:
+                                                X_combined = X_combined[:, :expected_feature_count]
+                                                logger.warning(f"Truncated features to match count: {X_combined.shape[1]}")
+                                    except Exception as feat_err:
+                                        logger.error(f"Error handling feature count: {str(feat_err)}")
+                                        
                                     # Make prediction
-                                    probs = actual_model.predict_proba(X_combined)
-                                    if len(probs[0]) > 1:
-                                        confidence = probs[0][1]  # Binary classification
-                                    else:
-                                        confidence = probs[0][0]
+                                    try:
+                                        probs = actual_model.predict_proba(X_combined)
+                                        if len(probs[0]) > 1:
+                                            confidence = probs[0][1]  # Binary classification
+                                        else:
+                                            confidence = probs[0][0]
+                                    except ValueError as model_err:
+                                        if "has 64 features, but" in str(model_err):
+                                            # Handle feature count mismatch detected by scikit-learn
+                                            logger.error(f"Feature count mismatch: {str(model_err)}")
+                                            # Return a default fallback value
+                                            return False, 0.0
+                                        else:
+                                            raise
                                         
                                     threshold = getattr(self, 'threshold', 0.5)
                                     is_attack = confidence > threshold
