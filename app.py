@@ -91,12 +91,33 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             
             # Load ML model components with proper error handling
             try:
-                self.rule_engine.load_ml_model(
-                    model_path='models/model_info.joblib',
-                    vectorizer_path='models/vectorizer.joblib',
-                    preprocessor_path='models/preprocessor.joblib',
-                )
-                logger.info("ML model loaded successfully")
+                # Load the complete model package from Cicada
+                # Standardize on the 'model' directory for consistency with Cicada
+                model_path = 'model/complete_model_package.joblib'
+                
+                # Try to load the complete model package
+                if os.path.exists(model_path):
+                    try:
+                        self.rule_engine.load_ml_model(model_path=model_path)
+                        logger.info(f"Complete Cicada model package loaded successfully")
+                    except Exception as e:
+                        logger.warning(f"Failed to load Cicada model package: {str(e)}")
+                        # Fall back to individual components
+                        logger.warning("Falling back to individual model components")
+                        self.rule_engine.load_ml_model(
+                            model_path='model/model_info.joblib',
+                            vectorizer_path='model/vectorizer.joblib',
+                            preprocessor_path='model/preprocessor.joblib',
+                        )
+                        logger.info("Individual ML model components loaded successfully")
+                else:
+                    logger.warning("Cicada model package not found, loading individual components")
+                    self.rule_engine.load_ml_model(
+                        model_path='model/model_info.joblib',
+                        vectorizer_path='model/vectorizer.joblib',
+                        preprocessor_path='model/preprocessor.joblib',
+                    )
+                    logger.info("Individual ML model components loaded successfully")
             except Exception as ml_error:
                 logger.error(f"Failed to load ML model: {str(ml_error)}")
                 logger.warning("System will fall back to rule-based detection only")

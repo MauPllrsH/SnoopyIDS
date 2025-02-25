@@ -74,9 +74,32 @@ class RuleEngine:
         self.collection.delete_one({'_id': ObjectId(rule_id)})
         self.load_rules()
 
-    def load_ml_model(self, model_path, vectorizer_path, preprocessor_path=None):
+    def load_ml_model(self, model_path, vectorizer_path=None, preprocessor_path=None):
         """Load ML model components with proper validation and error handling"""
         try:
+            # Check if we have a combined model package (preferred)
+            if os.path.exists(model_path) and 'complete_model_package' in model_path:
+                # Load the complete model package (preferred)
+                logger.info(f"Loading complete model package from {model_path}")
+                package = joblib.load(model_path)
+                
+                # Extract components from package
+                self.ml_model = package.get('model')
+                self.iso_model = package.get('iso_model')
+                self.vectorizer = package.get('vectorizer')
+                self.preprocessor = package.get('preprocessor')
+                self.feature_names = package.get('feature_names', [])
+                self.onehot_encoder = package.get('onehot_encoder')
+                self.threshold = package.get('threshold', 0.5)
+                self.iso_weight = package.get('iso_weight', 0.3)
+                
+                logger.info("Complete model package loaded successfully")
+                self.model_loaded = True
+                return
+            
+            # Fall back to individual files if package not available
+            logger.info("Complete package not found, attempting to load individual components")
+            
             # Check if files exist before loading
             for path in [model_path, vectorizer_path]:
                 if not os.path.exists(path):
@@ -112,32 +135,50 @@ class RuleEngine:
             raise ValueError(f"Failed to load ML model: {str(e)}")
 
     def extract_features(self, data):
-        # Convert single request to DataFrame
-        df = pd.DataFrame([data])
-
-        # Create features DataFrame using pre-compiled patterns
-        features = pd.DataFrame({
-            'method': df['method'],
-            'has_body': df['body'].notna().astype(int),
-            'header_count': df['headers'].apply(lambda x: len(x) if isinstance(x, dict) else 0),
-            'has_query': df['query'].astype(str).str.len().gt(0).astype(int),
-            'content_type': df['headers'].apply(lambda x: 1 if 'content-type' in str(x).lower() else 0),
-            'user_agent': df['headers'].apply(lambda x: 1 if 'user-agent' in str(x).lower() else 0),
-            'body_length': df['body'].fillna('').astype(str).str.len(),
-            'path_depth': df['path'].str.count('/'),
-            'has_sql_keywords': (
-                    df['body'].fillna('').astype(str).str.lower().str.contains(SQL_PATTERN) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(SQL_PATTERN)
-            ).astype(int),
-            'has_script_tags': (
-                    df['body'].fillna('').astype(str).str.lower().str.contains(SCRIPT_PATTERN) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(SCRIPT_PATTERN) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(DANGEROUS_URL_PATTERN) |
-                    df['query'].fillna('').astype(str).str.lower().str.contains(FORMAT_STRING_PATTERN)
-            ).astype(int)
-        })
-
-        return features
+        """
+        Extract features using Cicada's feature extractor for consistency.
+        
+        This method is kept for backward compatibility, but we'll forward
+        to the more advanced feature extractor from Cicada.
+        """
+        try:
+            # Import Cicada's feature extractor dynamically
+            from utils.cicada.feature_extractor import extract_features as cicada_extract_features
+            
+            # Convert single request to DataFrame
+            df = pd.DataFrame([data])
+            
+            # Use Cicada's advanced feature extraction
+            logger.debug("Using Cicada's advanced feature extraction")
+            features = cicada_extract_features(df)
+            return features
+        except Exception as e:
+            logger.error(f"Error using Cicada's feature extractor: {str(e)}")
+            logger.warning("Falling back to original feature extraction")
+            
+            # Fall back to original feature extraction if there's an error
+            df = pd.DataFrame([data])
+            features = pd.DataFrame({
+                'method': df['method'],
+                'has_body': df['body'].notna().astype(int),
+                'header_count': df['headers'].apply(lambda x: len(x) if isinstance(x, dict) else 0),
+                'has_query': df['query'].astype(str).str.len().gt(0).astype(int),
+                'content_type': df['headers'].apply(lambda x: 1 if 'content-type' in str(x).lower() else 0),
+                'user_agent': df['headers'].apply(lambda x: 1 if 'user-agent' in str(x).lower() else 0),
+                'body_length': df['body'].fillna('').astype(str).str.len(),
+                'path_depth': df['path'].str.count('/'),
+                'has_sql_keywords': (
+                        df['body'].fillna('').astype(str).str.lower().str.contains(SQL_PATTERN) |
+                        df['query'].fillna('').astype(str).str.lower().str.contains(SQL_PATTERN)
+                ).astype(int),
+                'has_script_tags': (
+                        df['body'].fillna('').astype(str).str.lower().str.contains(SCRIPT_PATTERN) |
+                        df['query'].fillna('').astype(str).str.lower().str.contains(SCRIPT_PATTERN) |
+                        df['query'].fillna('').astype(str).str.lower().str.contains(DANGEROUS_URL_PATTERN) |
+                        df['query'].fillna('').astype(str).str.lower().str.contains(FORMAT_STRING_PATTERN)
+                ).astype(int)
+            })
+            return features
 
     def predict_anomaly(self, data):
         """Predict if request is anomalous with proper error handling."""
@@ -146,42 +187,104 @@ class RuleEngine:
             raise ValueError("ML model components are not loaded properly")
 
         try:
-            # Extract features
-            X = self.extract_features(data)
-            path_features = self.vectorizer.transform([data.get('path', '')])
-
-            if self.preprocessor:
-                # Transform features through preprocessor
-                X_preprocessed = self.preprocessor.transform(X)
-
-                # Convert sparse matrices to arrays if needed
-                if issparse(X_preprocessed):
-                    X_preprocessed = X_preprocessed.toarray()
-                if issparse(path_features):
-                    path_features = path_features.toarray()
-
-                # Combine features
-                X_combined = np.hstack((X_preprocessed, path_features))
+            # First try the enhanced feature alignment approach (Cicada compatibility)
+            try:
+                # Import feature alignment utility from Cicada
+                from utils.cicada.feature_alignment import extract_features_consistent
                 
-                # Make prediction
-                prediction_proba = self.ml_model.predict_proba(X_combined)
-                attack_probability = prediction_proba[0][1]
+                # Convert single request to DataFrame for compatibility
+                df = pd.DataFrame([data])
+                
+                # Use the consistent feature extraction that matches training
+                logger.debug("Using Cicada's feature alignment for prediction")
+                X_combined = extract_features_consistent(
+                    df, 
+                    self.vectorizer, 
+                    self.preprocessor, 
+                    self.feature_names if hasattr(self, 'feature_names') else [],
+                    getattr(self, 'onehot_encoder', None)
+                )
+                
+                # Check if we have an isolation forest model for anomaly boosting
+                if hasattr(self, 'iso_model') and self.iso_model is not None:
+                    # Import the anomaly boosting utility
+                    from utils.cicada.anomaly_boosting import anomaly_boosted_predict
+                    
+                    # Use advanced anomaly-boosted prediction
+                    logger.debug("Using anomaly-boosted prediction")
+                    threshold = getattr(self, 'threshold', 0.5)
+                    iso_weight = getattr(self, 'iso_weight', 0.3)
+                    
+                    # Get anomaly-boosted prediction
+                    _, attack_probabilities = anomaly_boosted_predict(
+                        self.ml_model, X_combined, self.iso_model, 
+                        threshold=threshold, 
+                        iso_weight=iso_weight
+                    )
+                    attack_probability = attack_probabilities[0]
+                    
+                    logger.debug(f"Anomaly-boosted probability: {attack_probability:.4f}, threshold: {threshold}")
+                    return attack_probability > threshold, attack_probability
+                else:
+                    # Standard prediction with the ensemble model
+                    prediction_proba = self.ml_model.predict_proba(X_combined)
+                    attack_probability = prediction_proba[0][1]
+                    
+                    # Use the optimal threshold from Cicada if available
+                    threshold = getattr(self, 'threshold', 0.5)
+                    
+                    logger.debug(f"Prediction probability: {attack_probability:.4f}, threshold: {threshold}")
+                    return attack_probability > threshold, attack_probability
+                
+            except Exception as feature_align_error:
+                # Log the error but continue with fallback
+                logger.error(f"Error using Cicada feature alignment: {str(feature_align_error)}")
+                logger.warning("Falling back to original prediction method")
+                
+                # Fall back to original approach
+                raise feature_align_error
+                
+        except Exception:
+            # Fall back to original prediction approach
+            try:
+                # Extract features using original method
+                X = self.extract_features(data)
+                path_features = self.vectorizer.transform([data.get('path', '')])
 
-                # Determine threshold based on request properties
-                has_query = X['has_query'].iloc[0] == 1
-                has_suspicious_content = (X['has_sql_keywords'].iloc[0] == 1 or
-                                         X['has_script_tags'].iloc[0] == 1)
-                threshold = 0.3 if (has_query or has_suspicious_content) else 0.5
+                if self.preprocessor:
+                    # Transform features through preprocessor
+                    X_preprocessed = self.preprocessor.transform(X)
 
-                logger.debug(f"Prediction probability: {attack_probability:.4f}, threshold: {threshold}")
-                return attack_probability > threshold, attack_probability
+                    # Convert sparse matrices to arrays if needed
+                    if issparse(X_preprocessed):
+                        X_preprocessed = X_preprocessed.toarray()
+                    if issparse(path_features):
+                        path_features = path_features.toarray()
 
-            else:
-                raise ValueError("Preprocessor not loaded")
+                    # Combine features
+                    X_combined = np.hstack((X_preprocessed, path_features))
+                    
+                    # Make prediction
+                    prediction_proba = self.ml_model.predict_proba(X_combined)
+                    attack_probability = prediction_proba[0][1]
 
-        except Exception as e:
-            logger.error(f"Error during anomaly prediction: {str(e)}")
-            raise ValueError(f"Failed to predict anomaly: {str(e)}")
+                    # Determine threshold based on request properties
+                    has_query = X['has_query'].iloc[0] == 1
+                    has_suspicious_content = (X['has_sql_keywords'].iloc[0] == 1 or
+                                            X['has_script_tags'].iloc[0] == 1)
+                    threshold = 0.3 if (has_query or has_suspicious_content) else 0.5
+
+                    logger.debug(f"Prediction probability (fallback): {attack_probability:.4f}, threshold: {threshold}")
+                    return attack_probability > threshold, attack_probability
+
+                else:
+                    raise ValueError("Preprocessor not loaded")
+                    
+            except Exception as e:
+                logger.error(f"Error during anomaly prediction: {str(e)}")
+                # False alarm is better than a crash in production
+                logger.error("Returning False due to error - REQUEST MAY BE MISSED")
+                return False, 0.0
 
     def generate_rule_from_anomaly(self, data):
         """Generate rules based purely on ML model's detection with improved validation."""
