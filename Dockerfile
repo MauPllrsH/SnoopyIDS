@@ -24,6 +24,9 @@ RUN python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. waf.proto
 # Verify the proto files exist
 RUN ls -la waf_pb2*.py
 
+# Verify imports work correctly
+RUN python dockerfile_imports.py
+
 # Set Python to run in unbuffered mode
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

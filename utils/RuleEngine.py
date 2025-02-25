@@ -83,6 +83,10 @@ class RuleEngine:
     def load_ml_model(self, model_path, vectorizer_path=None, preprocessor_path=None):
         """Load ML model components with proper validation and error handling"""
         try:
+            # Make sure os is imported
+            import os
+            import sys
+            
             # First check if the path itself is the standalone model
             if 'standalone_model.joblib' in model_path:
                 standalone_path = model_path
@@ -99,6 +103,8 @@ class RuleEngine:
             # Try to load the standalone package if found
             if standalone_path and os.path.exists(standalone_path):
                 try:
+                    # Make sure joblib is imported
+                    import joblib
                     # Load the package
                     package = joblib.load(standalone_path)
                     
@@ -220,12 +226,25 @@ class RuleEngine:
 
         except Exception as e:
             logger.error(f"Error loading model components: {str(e)}")
-            # Make sure these are initialized
-            if not hasattr(self, 'model_loaded'):
-                self.model_loaded = False
-            if not hasattr(self, 'standalone_mode'):
-                self.standalone_mode = False
-            # Set to false regardless
+            # Make sure all model-related attributes are initialized
+            required_attrs = [
+                'model_loaded', 'standalone_mode', 'ml_model', 'vectorizer', 
+                'preprocessor', 'iso_model', 'threshold', 'iso_weight', 
+                'feature_names', 'predict_function'
+            ]
+            
+            for attr in required_attrs:
+                if not hasattr(self, attr):
+                    if attr in ['model_loaded', 'standalone_mode']:
+                        setattr(self, attr, False)
+                    elif attr in ['threshold', 'iso_weight']:
+                        setattr(self, attr, 0.5)  # reasonable defaults
+                    elif attr == 'feature_names':
+                        setattr(self, attr, [])
+                    else:
+                        setattr(self, attr, None)
+                        
+            # Set these to false regardless
             self.model_loaded = False
             self.standalone_mode = False
             raise ValueError(f"Failed to load ML model: {str(e)}")
