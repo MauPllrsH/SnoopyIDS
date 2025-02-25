@@ -101,11 +101,24 @@ class RuleEngine:
                     
                     # Dynamically load the prediction function
                     if self.standalone_code and self.predict_function_name:
-                        # Create a namespace for the code
+                        # Create a namespace for the code with required imports
                         namespace = {}
                         try:
+                            # Pre-import required libraries to make them available to the code
+                            import pandas as pd
+                            import numpy as np
+                            from scipy.sparse import issparse
+                            
+                            # Add these to the namespace
+                            namespace['pd'] = pd
+                            namespace['np'] = np
+                            namespace['issparse'] = issparse
+                            namespace['pandas'] = pd
+                            namespace['numpy'] = np
+                            
                             # Execute the code in the namespace
                             exec(self.standalone_code, namespace)
+                            
                             # Get the prediction function
                             self.predict_function = namespace.get(self.predict_function_name)
                             if self.predict_function:
@@ -255,8 +268,17 @@ class RuleEngine:
                 logger.debug("Using standalone prediction function")
                 
                 # Create a model_components dictionary with all needed components
+                
+                # First check if self.ml_model is a dict that contains the actual model
+                actual_model = None
+                if isinstance(self.ml_model, dict) and 'model' in self.ml_model:
+                    actual_model = self.ml_model['model']
+                    logger.debug("Found model inside dictionary structure")
+                else:
+                    actual_model = self.ml_model
+                
                 model_components = {
-                    'model': self.ml_model,
+                    'model': actual_model,  # Use actual model, not the wrapper dict
                     'iso_model': getattr(self, 'iso_model', None),
                     'vectorizer': self.vectorizer,
                     'preprocessor': self.preprocessor,
@@ -265,10 +287,43 @@ class RuleEngine:
                     'iso_weight': getattr(self, 'iso_weight', 0.3)
                 }
                 
+                # Check if components are valid before prediction
+                if (hasattr(actual_model, 'predict_proba') and
+                    self.vectorizer is not None and
+                    self.preprocessor is not None):
+                    logger.debug("Verified model components for standalone prediction")
+                else:
+                    logger.warning("Model components validation failed - prediction may not work correctly")
+                    if not hasattr(actual_model, 'predict_proba'):
+                        logger.error(f"Model type {type(actual_model)} does not support predict_proba")
+                    if self.vectorizer is None:
+                        logger.error("Vectorizer is missing")
+                    if self.preprocessor is None:
+                        logger.error("Preprocessor is missing")
+                
+                # Make sure pandas is available
+                try:
+                    import pandas as pd
+                except ImportError:
+                    logger.error("pandas library is not available, which is required for prediction")
+                    # Fall back to simple rule-based detection
+                    raise ImportError("pandas not available")
+                
+                # Make DataFrame if needed
+                if isinstance(data, dict):
+                    data_df = pd.DataFrame([data])
+                else:
+                    data_df = data
+                
                 # Call the standalone prediction function
-                is_attack, confidence = self.predict_function(data, model_components)
-                logger.debug(f"Standalone prediction: {is_attack} with confidence {confidence:.4f}")
-                return is_attack, confidence
+                try:
+                    is_attack, confidence = self.predict_function(data_df, model_components)
+                    logger.debug(f"Standalone prediction: {is_attack} with confidence {confidence:.4f}")
+                    return is_attack, confidence
+                except Exception as e:
+                    logger.error(f"Error in standalone prediction: {str(e)}")
+                    logger.warning("Falling back to standard detection")
+                    raise e
                 
             except Exception as standalone_error:
                 # Log the error but continue with fallback methods
