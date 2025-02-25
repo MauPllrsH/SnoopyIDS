@@ -17,22 +17,15 @@ from pymongo import MongoClient
 # Import logger first so we can use it for startup logs
 from utils.logger_config import logger
 
-print("Importing protocol buffers...")
-# Simple solution: try WAF first (deployment name), then IDS (development name)
+# Import WAF protocol buffers
 try:
-    import waf_pb2 as ids_pb2
-    import waf_pb2_grpc as ids_pb2_grpc
-    logger.info("Successfully imported WAF protocol buffers")
-except ImportError:
-    logger.warning("WAF protocol buffers not found, trying IDS protocol buffers")
-    try:
-        import ids_pb2
-        import ids_pb2_grpc
-        logger.info("Successfully imported IDS protocol buffers")
-    except ImportError:
-        logger.error("Failed to import protocol buffers. Make sure to compile them.")
-        logger.error("Run: python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. waf.proto")
-        raise
+    import waf_pb2
+    import waf_pb2_grpc
+    logger.info("WAF protocol buffers imported successfully")
+except ImportError as e:
+    logger.error(f"Failed to import WAF protocol buffer modules: {str(e)}")
+    logger.error("Make sure the WAF protocol buffers are compiled")
+    raise
 
 def log_exception(e):
     """Log exception details using the configured logger"""
@@ -60,7 +53,7 @@ except Exception as e:
     raise e
 
 
-class IDSServicer(ids_pb2_grpc.IDSServicer):
+class IDSServicer(waf_pb2_grpc.WAFServicer):
     def __init__(self):
         try:
             logger.info("Initializing IDSServicer...")
@@ -202,10 +195,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 # Store attack log
                 self.store_log_entry(analysis_data, True, message, [matched_rule])
 
-                return ids_pb2.ProcessResult(
+                return waf_pb2.ProcessResult(
                     injection_detected=True,
                     message=message,
-                    matched_rules=[matched_rule]
+                    matched_rules=[matched_rule],
+                    should_block=False
                 )
 
             # If no rule matches, use ML analysis
@@ -224,10 +218,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     # Store ML-detected attack log
                     self.store_log_entry(analysis_data, True, message, [new_rule_name] if new_rule_name else [])
 
-                    return ids_pb2.ProcessResult(
+                    return waf_pb2.ProcessResult(
                         injection_detected=True,
                         message=message,
-                        matched_rules=[new_rule_name] if new_rule_name else []
+                        matched_rules=[new_rule_name] if new_rule_name else [],
+                        should_block=False
                     )
                 else:
                     message = "No anomalies detected"
@@ -236,10 +231,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                     # Store normal request log
                     self.store_log_entry(analysis_data, False, message)
 
-                    return ids_pb2.ProcessResult(
+                    return waf_pb2.ProcessResult(
                         injection_detected=False,
                         message=message,
-                        matched_rules=[]
+                        matched_rules=[],
+                        should_block=False
                     )
             except Exception as e:
                 message = f"Request processed (ML error: {str(e)})"
@@ -248,10 +244,11 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
                 # Store error log
                 self.store_log_entry(analysis_data, False, message)
 
-                return ids_pb2.ProcessResult(
+                return waf_pb2.ProcessResult(
                     injection_detected=False,
                     message=message,
-                    matched_rules=[]
+                    matched_rules=[],
+                    should_block=False
                 )
 
         except Exception as e:
@@ -262,14 +259,21 @@ class IDSServicer(ids_pb2_grpc.IDSServicer):
             if 'analysis_data' in locals():
                 self.store_log_entry(analysis_data, False, message)
 
-            return ids_pb2.ProcessResult(
+            return waf_pb2.ProcessResult(
                 injection_detected=False,
                 message=message,
-                matched_rules=[]
+                matched_rules=[],
+                should_block=False
             )
 
     def HealthCheck(self, request, context):
-        return ids_pb2.HealthCheckResponse(is_healthy=True)
+        return waf_pb2.HealthCheckResponse(is_healthy=True)
+        
+    def GetPreventionMode(self, request, context):
+        return waf_pb2.PreventionModeResponse(enabled=False)
+        
+    def SetPreventionMode(self, request, context):
+        return waf_pb2.PreventionModeResponse(enabled=False)
     
 def serve():
     try:
@@ -304,7 +308,7 @@ def serve():
         )
 
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        ids_pb2_grpc.add_IDSServicer_to_server(IDSServicer(), server)
+        waf_pb2_grpc.add_WAFServicer_to_server(IDSServicer(), server)
         
         server_address = '0.0.0.0:50051'
         server.add_secure_port(server_address, server_credentials)

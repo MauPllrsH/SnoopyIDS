@@ -17,10 +17,12 @@ COPY . .
 # Create a directory for logs
 RUN mkdir -p logs && chmod 777 logs
 
-# Make sure protocol buffers are compiled
+# Make sure WAF protocol buffers are compiled
 RUN pip install grpcio-tools
 RUN python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. waf.proto
-# No need for symbolic links - we're directly importing waf_pb2 as ids_pb2 in code
+
+# Verify the proto files exist
+RUN ls -la waf_pb2*.py
 
 # Set Python to run in unbuffered mode
 ENV PYTHONUNBUFFERED=1
