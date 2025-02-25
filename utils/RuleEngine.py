@@ -34,8 +34,14 @@ class RuleEngine:
         self.preprocessor = None
         self.label_encoder = None
         
-        # Track if model is loaded
+        # Track model state
         self.model_loaded = False
+        self.standalone_mode = False
+        self.predict_function = None
+        self.feature_names = []
+        self.iso_model = None
+        self.threshold = 0.5
+        self.iso_weight = 0.3
 
     def load_rules(self):
         self.rules = []
@@ -77,11 +83,21 @@ class RuleEngine:
     def load_ml_model(self, model_path, vectorizer_path=None, preprocessor_path=None):
         """Load ML model components with proper validation and error handling"""
         try:
-            # First check for standalone model package (most robust)
-            standalone_path = os.path.join(os.path.dirname(model_path), 'standalone_model.joblib')
-            if os.path.exists(standalone_path):
-                logger.info(f"Found standalone model package, loading from {standalone_path}")
-                # Try to load the standalone package
+            # First check if the path itself is the standalone model
+            if 'standalone_model.joblib' in model_path:
+                standalone_path = model_path
+                logger.info(f"Using provided standalone model: {standalone_path}")
+            else:
+                # Otherwise check for standalone model in the same directory
+                standalone_path = os.path.join(os.path.dirname(model_path), 'standalone_model.joblib')
+                if os.path.exists(standalone_path):
+                    logger.info(f"Found standalone model package in directory: {standalone_path}")
+                else:
+                    # No standalone model found
+                    standalone_path = None
+                    
+            # Try to load the standalone package if found
+            if standalone_path and os.path.exists(standalone_path):
                 try:
                     # Load the package
                     package = joblib.load(standalone_path)
@@ -144,6 +160,9 @@ class RuleEngine:
                 except Exception as standalone_error:
                     logger.error(f"Error loading standalone model: {str(standalone_error)}")
                     logger.warning("Falling back to other model formats")
+                    # Initialize to prevent errors
+                    self.model_loaded = False
+                    self.standalone_mode = False
             
             # Check if we have a combined model package (second best option)
             if os.path.exists(model_path) and ('complete_model_package' in model_path or 'model_dir' in model_path):
@@ -201,6 +220,12 @@ class RuleEngine:
 
         except Exception as e:
             logger.error(f"Error loading model components: {str(e)}")
+            # Make sure these are initialized
+            if not hasattr(self, 'model_loaded'):
+                self.model_loaded = False
+            if not hasattr(self, 'standalone_mode'):
+                self.standalone_mode = False
+            # Set to false regardless
             self.model_loaded = False
             self.standalone_mode = False
             raise ValueError(f"Failed to load ML model: {str(e)}")
