@@ -10,14 +10,29 @@ import contextlib
 from dotenv import load_dotenv
 from concurrent import futures
 from utils.RuleEngine import RuleEngine
-import ids_pb2
-import ids_pb2_grpc
 from urllib.parse import quote_plus
 from datetime import datetime
 from pymongo import MongoClient
 
 # Import logger first so we can use it for startup logs
 from utils.logger_config import logger
+
+print("Importing protocol buffers...")
+# Simple solution: try WAF first (deployment name), then IDS (development name)
+try:
+    import waf_pb2 as ids_pb2
+    import waf_pb2_grpc as ids_pb2_grpc
+    logger.info("Successfully imported WAF protocol buffers")
+except ImportError:
+    logger.warning("WAF protocol buffers not found, trying IDS protocol buffers")
+    try:
+        import ids_pb2
+        import ids_pb2_grpc
+        logger.info("Successfully imported IDS protocol buffers")
+    except ImportError:
+        logger.error("Failed to import protocol buffers. Make sure to compile them.")
+        logger.error("Run: python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. waf.proto")
+        raise
 
 def log_exception(e):
     """Log exception details using the configured logger"""
