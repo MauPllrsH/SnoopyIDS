@@ -107,11 +107,17 @@ class RuleEngine:
                             # Pre-import required libraries to make them available to the code
                             import pandas as pd
                             import numpy as np
+                            import re
+                            import os
+                            import sys
                             from scipy.sparse import issparse
                             
                             # Add these to the namespace
                             namespace['pd'] = pd
                             namespace['np'] = np
+                            namespace['re'] = re
+                            namespace['os'] = os
+                            namespace['sys'] = sys
                             namespace['issparse'] = issparse
                             namespace['pandas'] = pd
                             namespace['numpy'] = np
@@ -269,13 +275,35 @@ class RuleEngine:
                 
                 # Create a model_components dictionary with all needed components
                 
-                # First check if self.ml_model is a dict that contains the actual model
-                actual_model = None
-                if isinstance(self.ml_model, dict) and 'model' in self.ml_model:
-                    actual_model = self.ml_model['model']
-                    logger.debug("Found model inside dictionary structure")
+                # Function to recursively find the actual model in nested dictionaries
+                def find_actual_model(model_obj, depth=0):
+                    if depth > 3:  # Limit recursion depth
+                        return model_obj
+                        
+                    if isinstance(model_obj, dict):
+                        # Try common keys for models
+                        for key in ['model', 'ensemble_model', 'ml_model', 'classifier']:
+                            if key in model_obj:
+                                found = find_actual_model(model_obj[key], depth+1)
+                                if hasattr(found, 'predict_proba'):
+                                    logger.debug(f"Found model at key '{key}'")
+                                    return found
+                        
+                        # If we reach here, no model was found in known keys
+                        # Try to find any dict value that has predict_proba
+                        for key, value in model_obj.items():
+                            if hasattr(value, 'predict_proba'):
+                                logger.debug(f"Found model at key '{key}'")
+                                return value
+                                
+                    return model_obj
+                
+                # Find the actual model in potentially nested structures
+                actual_model = find_actual_model(self.ml_model)
+                if hasattr(actual_model, 'predict_proba'):
+                    logger.debug(f"Found usable model of type {type(actual_model).__name__}")
                 else:
-                    actual_model = self.ml_model
+                    logger.warning(f"Could not find usable model, using {type(actual_model).__name__}")
                 
                 model_components = {
                     'model': actual_model,  # Use actual model, not the wrapper dict
@@ -304,10 +332,13 @@ class RuleEngine:
                 # Make sure pandas is available
                 try:
                     import pandas as pd
-                except ImportError:
-                    logger.error("pandas library is not available, which is required for prediction")
+                    import numpy as np
+                    import re
+                    from scipy.sparse import issparse
+                except ImportError as e:
+                    logger.error(f"Required library not available: {str(e)}")
                     # Fall back to simple rule-based detection
-                    raise ImportError("pandas not available")
+                    raise ImportError(f"Required import not available: {str(e)}")
                 
                 # Make DataFrame if needed
                 if isinstance(data, dict):
@@ -317,13 +348,54 @@ class RuleEngine:
                 
                 # Call the standalone prediction function
                 try:
+                    # Try using the standalone function first
                     is_attack, confidence = self.predict_function(data_df, model_components)
                     logger.debug(f"Standalone prediction: {is_attack} with confidence {confidence:.4f}")
                     return is_attack, confidence
                 except Exception as e:
                     logger.error(f"Error in standalone prediction: {str(e)}")
-                    logger.warning("Falling back to standard detection")
-                    raise e
+                    logger.warning("Trying built-in prediction as fallback")
+                    
+                    try:
+                        # Direct prediction using model components
+                        if hasattr(actual_model, 'predict_proba'):
+                            # Extract basic features
+                            X = self.extract_features(data)
+                            
+                            # Make sure vectorizer works
+                            if hasattr(self.vectorizer, 'transform'):
+                                path_features = self.vectorizer.transform([data.get('path', '')])
+                                
+                                # Try to preprocess features
+                                if hasattr(self.preprocessor, 'transform'):
+                                    X_preprocessed = self.preprocessor.transform(X)
+                                    
+                                    # Combine features
+                                    if issparse(X_preprocessed):
+                                        X_preprocessed = X_preprocessed.toarray()
+                                    if issparse(path_features):
+                                        path_features = path_features.toarray()
+                                        
+                                    X_combined = np.hstack((X_preprocessed, path_features))
+                                    
+                                    # Make prediction
+                                    probs = actual_model.predict_proba(X_combined)
+                                    if len(probs[0]) > 1:
+                                        confidence = probs[0][1]  # Binary classification
+                                    else:
+                                        confidence = probs[0][0]
+                                        
+                                    threshold = getattr(self, 'threshold', 0.5)
+                                    is_attack = confidence > threshold
+                                    
+                                    logger.debug(f"Direct prediction: {is_attack} with confidence {confidence:.4f}")
+                                    return is_attack, confidence
+                    except Exception as direct_error:
+                        logger.error(f"Direct prediction failed: {str(direct_error)}")
+                
+                    # If we reach here, both prediction methods failed
+                    logger.error("All prediction methods failed - returning default (safe) value")
+                    return False, 0.0
                 
             except Exception as standalone_error:
                 # Log the error but continue with fallback methods
