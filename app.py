@@ -97,38 +97,78 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             self.rule_engine.load_rules()
             logger.info("Rules loaded")
             
-            # Load ML model components with proper error handling
+            # Load ML model components with much more robust error handling
             try:
-                # Load the complete model package from Cicada
-                # Standardize on the 'model' directory for consistency with Cicada
-                model_path = 'model/complete_model_package.joblib'
+                # First check what model files actually exist
+                model_dir = 'model'
+                standalone_path = os.path.join(model_dir, 'standalone_model.joblib')
+                complete_package_path = os.path.join(model_dir, 'complete_model_package.joblib')
+                model_info_path = os.path.join(model_dir, 'model_info.joblib')
+                vectorizer_path = os.path.join(model_dir, 'vectorizer.joblib')
+                preprocessor_path = os.path.join(model_dir, 'preprocessor.joblib')
                 
-                # Try to load the complete model package
-                if os.path.exists(model_path):
+                # Log what model files exist
+                logger.info(f"Checking for model files:")
+                logger.info(f"- standalone_model.joblib: {os.path.exists(standalone_path)}")
+                logger.info(f"- complete_model_package.joblib: {os.path.exists(complete_package_path)}")
+                logger.info(f"- model_info.joblib: {os.path.exists(model_info_path)}")
+                logger.info(f"- vectorizer.joblib: {os.path.exists(vectorizer_path)}")
+                logger.info(f"- preprocessor.joblib: {os.path.exists(preprocessor_path)}")
+                
+                # First try standalone model (best option)
+                if os.path.exists(standalone_path):
+                    logger.info(f"Loading standalone model from {standalone_path}")
                     try:
-                        self.rule_engine.load_ml_model(model_path=model_path)
-                        logger.info(f"Complete Cicada model package loaded successfully")
+                        self.rule_engine.load_ml_model(model_path=standalone_path)
+                        logger.info("Standalone model loaded successfully")
                     except Exception as e:
-                        logger.warning(f"Failed to load Cicada model package: {str(e)}")
-                        # Fall back to individual components
-                        logger.warning("Falling back to individual model components")
+                        logger.error(f"Failed to load standalone model: {str(e)}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error traceback: {traceback.format_exc()}")
+                        # Continue to next option
+                
+                # Then try complete package
+                elif os.path.exists(complete_package_path):
+                    logger.info(f"Loading complete package from {complete_package_path}")
+                    try:
+                        self.rule_engine.load_ml_model(model_path=complete_package_path)
+                        logger.info("Complete package loaded successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to load complete package: {str(e)}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error traceback: {traceback.format_exc()}")
+                        # Continue to next option
+                
+                # Finally try individual components
+                elif os.path.exists(model_info_path) and os.path.exists(vectorizer_path):
+                    logger.info("Loading individual model components")
+                    try:
                         self.rule_engine.load_ml_model(
-                            model_path='model/model_info.joblib',
-                            vectorizer_path='model/vectorizer.joblib',
-                            preprocessor_path='model/preprocessor.joblib',
+                            model_path=model_info_path,
+                            vectorizer_path=vectorizer_path,
+                            preprocessor_path=preprocessor_path if os.path.exists(preprocessor_path) else None
                         )
-                        logger.info("Individual ML model components loaded successfully")
+                        logger.info("Individual components loaded successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to load individual components: {str(e)}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error traceback: {traceback.format_exc()}")
+                
                 else:
-                    logger.warning("Cicada model package not found, loading individual components")
-                    self.rule_engine.load_ml_model(
-                        model_path='model/model_info.joblib',
-                        vectorizer_path='model/vectorizer.joblib',
-                        preprocessor_path='model/preprocessor.joblib',
-                    )
-                    logger.info("Individual ML model components loaded successfully")
+                    # No model files found
+                    logger.error("No model files found in the model directory")
+                    logger.error("Please ensure model files are copied to the correct location")
+                    # Continue execution, but model_loaded will be False
+            
             except Exception as ml_error:
-                logger.error(f"Failed to load ML model: {str(ml_error)}")
+                logger.error(f"Failed to load any ML model: {str(ml_error)}")
                 logger.warning("System will fall back to rule-based detection only")
+                
+            # Verify the model was loaded correctly
+            if hasattr(self.rule_engine, 'model_loaded') and self.rule_engine.model_loaded:
+                logger.info("Model successfully loaded and ready for prediction")
+            else:
+                logger.error("Model did not load correctly - prediction will not be available")
 
         except Exception as e:
             log_exception(e)
@@ -204,7 +244,24 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
 
             # If no rule matches, use ML analysis
             try:
-                is_anomaly, confidence = self.rule_engine.predict_anomaly(analysis_data)
+                try:
+                    # Check if model is loaded before attempting prediction
+                    if not self.rule_engine.model_loaded:
+                        logger.warning("Cannot use ML prediction - model not loaded")
+                        # Return as not an attack
+                        is_anomaly, confidence = False, 0.0
+                    else:
+                        # Use ML prediction if model is loaded
+                        logger.debug("Attempting ML prediction")
+                        is_anomaly, confidence = self.rule_engine.predict_anomaly(analysis_data)
+                        logger.debug(f"ML prediction result: is_anomaly={is_anomaly}, confidence={confidence:.4f}")
+                except Exception as pred_error:
+                    # Log but continue with non-attack result
+                    logger.error(f"Error during ML prediction: {str(pred_error)}")
+                    logger.error(f"Prediction error type: {type(pred_error).__name__}")
+                    logger.error(f"Prediction error traceback: {traceback.format_exc()}")
+                    # Default to not an attack
+                    is_anomaly, confidence = False, 0.0
                 if is_anomaly:
                     new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
                     message = f"🤖 ML model detected anomaly" + (f". Generated rule: {new_rule_name}" if new_rule_name else "")
