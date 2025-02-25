@@ -151,6 +151,16 @@ class RuleEngine:
             # Use Cicada's advanced feature extraction
             logger.debug("Using Cicada's advanced feature extraction")
             features = cicada_extract_features(df)
+            
+            # Manually add endpoint features that might be missing (for Docker environment)
+            # These match what Cicada's feature_alignment.py would normally add
+            features['is_search_endpoint'] = df['path'].str.contains('/search').astype(int)
+            features['is_login_endpoint'] = df['path'].str.contains('/login').astype(int)
+            features['is_root_endpoint'] = (df['path'] == '/').astype(int)
+            features['path_length'] = df['path'].str.len()
+            features['query_param_count'] = df['query'].str.count('&') + 1
+            features['has_special_chars'] = df['path'].str.contains('[<>{}()\'"]').astype(int)
+            
             return features
         except Exception as e:
             logger.error(f"Error using Cicada's feature extractor: {str(e)}")
@@ -197,13 +207,62 @@ class RuleEngine:
                 
                 # Use the consistent feature extraction that matches training
                 logger.debug("Using Cicada's feature alignment for prediction")
-                X_combined = extract_features_consistent(
-                    df, 
-                    self.vectorizer, 
-                    self.preprocessor, 
-                    self.feature_names if hasattr(self, 'feature_names') else [],
-                    getattr(self, 'onehot_encoder', None)
-                )
+                try:
+                    X_combined = extract_features_consistent(
+                        df, 
+                        self.vectorizer, 
+                        self.preprocessor, 
+                        self.feature_names if hasattr(self, 'feature_names') else [],
+                        getattr(self, 'onehot_encoder', None)
+                    )
+                except Exception as e:
+                    if "columns are missing" in str(e):
+                        # Handle missing columns error by using direct approach
+                        logger.warning(f"Feature alignment error: {str(e)}")
+                        logger.warning("Falling back to direct feature extraction and transformation")
+                        
+                        # Extract features using our enhanced extract_features method that adds endpoint features
+                        X = self.extract_features(data)
+                        
+                        # Transform features manually
+                        categorical_columns = ['method']
+                        numerical_columns = [col for col in X.columns if col not in categorical_columns]
+                        
+                        # Get onehot encoder from preprocessor
+                        onehot = getattr(self, 'onehot_encoder', None)
+                        if onehot is None and hasattr(self.preprocessor, 'named_transformers_'):
+                            try:
+                                onehot = self.preprocessor.named_transformers_['cat']
+                            except:
+                                pass
+                        
+                        if onehot:
+                            X_cat = onehot.transform(X[categorical_columns])
+                        else:
+                            # If we can't get the encoder, use a simple one-hot encoding
+                            from sklearn.preprocessing import OneHotEncoder
+                            temp_encoder = OneHotEncoder(handle_unknown='ignore')
+                            X_cat = temp_encoder.fit_transform(X[categorical_columns])
+                            
+                        # Transform numerical features    
+                        X_num = self.preprocessor.named_transformers_['num'].transform(X[numerical_columns])
+                        
+                        # Convert to arrays if they're sparse
+                        if issparse(X_num):
+                            X_num = X_num.toarray()
+                        if issparse(X_cat):
+                            X_cat = X_cat.toarray()
+                            
+                        # Get path features
+                        path_features = self.vectorizer.transform(df['path'])
+                        if issparse(path_features):
+                            path_features = path_features.toarray()
+                            
+                        # Combine features
+                        X_combined = np.hstack((X_num, X_cat, path_features))
+                    else:
+                        # Re-raise other exceptions
+                        raise
                 
                 # Check if we have an isolation forest model for anomaly boosting
                 if hasattr(self, 'iso_model') and self.iso_model is not None:
