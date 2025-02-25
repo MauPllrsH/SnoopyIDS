@@ -77,9 +77,58 @@ class RuleEngine:
     def load_ml_model(self, model_path, vectorizer_path=None, preprocessor_path=None):
         """Load ML model components with proper validation and error handling"""
         try:
-            # Check if we have a combined model package (preferred)
-            if os.path.exists(model_path) and 'complete_model_package' in model_path:
-                # Load the complete model package (preferred)
+            # First check for standalone model package (most robust)
+            standalone_path = os.path.join(os.path.dirname(model_path), 'standalone_model.joblib')
+            if os.path.exists(standalone_path):
+                logger.info(f"Found standalone model package, loading from {standalone_path}")
+                # Try to load the standalone package
+                try:
+                    # Load the package
+                    package = joblib.load(standalone_path)
+                    
+                    # Extract model components
+                    self.ml_model = package.get('model')
+                    self.iso_model = package.get('iso_model')
+                    self.vectorizer = package.get('vectorizer')
+                    self.preprocessor = package.get('preprocessor')
+                    self.feature_names = package.get('feature_names', [])
+                    self.threshold = package.get('threshold', 0.5)
+                    self.iso_weight = package.get('iso_weight', 0.3)
+                    
+                    # Store the code and prediction function for direct execution
+                    self.standalone_code = package.get('code', '')
+                    self.predict_function_name = package.get('predict_function', '')
+                    
+                    # Dynamically load the prediction function
+                    if self.standalone_code and self.predict_function_name:
+                        # Create a namespace for the code
+                        namespace = {}
+                        try:
+                            # Execute the code in the namespace
+                            exec(self.standalone_code, namespace)
+                            # Get the prediction function
+                            self.predict_function = namespace.get(self.predict_function_name)
+                            if self.predict_function:
+                                logger.info("Successfully loaded standalone prediction function")
+                            else:
+                                logger.warning(f"Prediction function '{self.predict_function_name}' not found in code")
+                        except Exception as code_error:
+                            logger.error(f"Error loading prediction code: {str(code_error)}")
+                    
+                    # Mark model as successfully loaded
+                    self.model_loaded = True
+                    self.standalone_mode = True
+                    logger.info("Standalone model package loaded successfully")
+                    
+                    # Early return, we have everything we need
+                    return
+                except Exception as standalone_error:
+                    logger.error(f"Error loading standalone model: {str(standalone_error)}")
+                    logger.warning("Falling back to other model formats")
+            
+            # Check if we have a combined model package (second best option)
+            if os.path.exists(model_path) and ('complete_model_package' in model_path or 'model_dir' in model_path):
+                # Load the complete model package
                 logger.info(f"Loading complete model package from {model_path}")
                 package = joblib.load(model_path)
                 
@@ -95,6 +144,7 @@ class RuleEngine:
                 
                 logger.info("Complete model package loaded successfully")
                 self.model_loaded = True
+                self.standalone_mode = False
                 return
             
             # Fall back to individual files if package not available
@@ -127,11 +177,13 @@ class RuleEngine:
             
             # Mark model as successfully loaded
             self.model_loaded = True
+            self.standalone_mode = False
             logger.info("ML model components loaded successfully")
 
         except Exception as e:
             logger.error(f"Error loading model components: {str(e)}")
             self.model_loaded = False
+            self.standalone_mode = False
             raise ValueError(f"Failed to load ML model: {str(e)}")
 
     def extract_features(self, data):
@@ -196,6 +248,34 @@ class RuleEngine:
             logger.warning("ML model not loaded, cannot perform prediction")
             raise ValueError("ML model components are not loaded properly")
 
+        # Check if we're in standalone mode (using self-contained model)
+        if hasattr(self, 'standalone_mode') and self.standalone_mode and hasattr(self, 'predict_function'):
+            try:
+                # Use the standalone prediction function directly
+                logger.debug("Using standalone prediction function")
+                
+                # Create a model_components dictionary with all needed components
+                model_components = {
+                    'model': self.ml_model,
+                    'iso_model': getattr(self, 'iso_model', None),
+                    'vectorizer': self.vectorizer,
+                    'preprocessor': self.preprocessor,
+                    'feature_names': getattr(self, 'feature_names', []),
+                    'threshold': getattr(self, 'threshold', 0.5),
+                    'iso_weight': getattr(self, 'iso_weight', 0.3)
+                }
+                
+                # Call the standalone prediction function
+                is_attack, confidence = self.predict_function(data, model_components)
+                logger.debug(f"Standalone prediction: {is_attack} with confidence {confidence:.4f}")
+                return is_attack, confidence
+                
+            except Exception as standalone_error:
+                # Log the error but continue with fallback methods
+                logger.error(f"Error using standalone prediction: {str(standalone_error)}")
+                logger.warning("Falling back to standard prediction methods")
+        
+        # Standard prediction methods if standalone mode fails or is not available
         try:
             # First try the enhanced feature alignment approach (Cicada compatibility)
             try:
