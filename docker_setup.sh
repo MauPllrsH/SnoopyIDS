@@ -86,7 +86,7 @@ cat > docker_start.sh << 'EOF'
 #!/bin/bash
 # Start SnoopyIDS with preloaded modules
 python -u preload.py
-python -u preload.py && python -u app.py
+python -u preload.py && python -u preload.py && python -u preload.py && python -u app.py
 EOF
 
 chmod +x docker_start.sh
