@@ -44,7 +44,6 @@ COPY docker_start.sh .
 # Make sure scripts are executable
 RUN chmod +x preload.py
 RUN chmod +x docker_start.sh
-RUN chmod +x start.sh
 
 # Set Python to run in unbuffered mode
 ENV PYTHONUNBUFFERED=1
