@@ -3,15 +3,8 @@ import re
 import numpy as np
 from utils.logger_config import logger
 
-# Debug import
-logger.info("DEBUG: Importing feature_extractor.py")
-
-# Regular import with debug
-try:
-    from scipy.stats import entropy
-    logger.info("DEBUG: Successfully imported entropy from scipy.stats")
-except ImportError as e:
-    logger.error(f"DEBUG: Failed to import entropy from scipy.stats: {e}")
+# Import entropy from scipy.stats
+from scipy.stats import entropy
 
 
 def extract_features(data):
@@ -64,50 +57,29 @@ def extract_features(data):
         else 0
     )
     
-    # Simple entropy calculation with debug logging
+    # Calculate entropy for path and query strings
     def calculate_entropy(text):
-        logger.info(f"DEBUG: Starting entropy calculation for text: {text[:10]}...")
-        
         if not isinstance(text, str) or len(text) < 2:
             return 0
         
         # Count character frequencies
         try:
-            # Convert to bytes
             text_bytes = text.encode('utf-8', errors='ignore')
             if len(text_bytes) < 2:
                 return 0
                 
-            # Convert to array and count frequencies
+            # Calculate entropy
             byte_array = np.frombuffer(text_bytes, dtype=np.uint8)
             freq = np.bincount(byte_array)
             freq = freq[freq > 0]  # Only use non-zero frequencies
             
-            # Check if entropy exists
-            logger.info("DEBUG: About to call entropy function")
-            logger.info(f"DEBUG: entropy exists in globals: {'entropy' in globals()}")
-            logger.info(f"DEBUG: entropy exists in locals: {'entropy' in locals()}")
-            logger.info(f"DEBUG: Type of freq: {type(freq)}")
-            
-            # Try to use entropy function
-            try:
-                result = entropy(freq, base=2)
-                logger.info(f"DEBUG: Entropy calculation successful: {result}")
-                return result
-            except Exception as e:
-                logger.error(f"DEBUG: Error in entropy calculation: {e}")
-                # Return 0 as fallback
-                return 0
+            return entropy(freq, base=2)
                 
-        except Exception as e:
-            logger.error(f"DEBUG: Exception in calculate_entropy: {e}")
+        except Exception:
             return 0
 
-    # Apply entropy calculation with debug logging
-    logger.info("DEBUG: Starting path entropy calculation")
+    # Apply entropy calculation
     features['path_entropy'] = data['path'].apply(calculate_entropy)
-    
-    logger.info("DEBUG: Starting query entropy calculation")
     features['query_entropy'] = data['query'].fillna('').apply(calculate_entropy)
     
     # Detect encoded content (base64, hex, url encoding)
@@ -147,9 +119,9 @@ def extract_features(data):
                               data['headers'].apply(lambda x: 1 if isinstance(x, dict) and 
                                                    any(r'${jndi:' in str(v).lower() for v in x.values()) else 0)
     
-    # Cross-domain includes detection                         
-    features['remote_includes'] = data['path'].str.contains(r'=(https?:|www\.)').astype(int) | \
-                                 data['query'].fillna('').str.contains(r'=(https?:|www\.)').astype(int)
+    # Cross-domain includes detection - fixed regex to remove capture groups
+    features['remote_includes'] = data['path'].str.contains(r'=(?:https?:|www\.)').astype(int) | \
+                                 data['query'].fillna('').str.contains(r'=(?:https?:|www\.)').astype(int)
     
     # Number of parameters in the request
     features['param_count'] = data['query'].fillna('').apply(lambda x: x.count('='))
