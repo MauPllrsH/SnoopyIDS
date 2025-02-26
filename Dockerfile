@@ -9,12 +9,9 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt scipy
 
-# Copy fix_feature_extractor.py first so we can run it
-COPY fix_feature_extractor.py .
-
-# Copy the rest of the application
+# Copy the application
 COPY . .
 
 # Create a directory for logs
@@ -24,8 +21,8 @@ RUN mkdir -p logs && chmod 777 logs
 RUN pip install grpcio-tools
 RUN python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. waf.proto
 
-# Apply the fixes to handle both entropy and feature count issues
-RUN python fix_feature_extractor.py
+# Verify the proto files exist
+RUN ls -la waf_pb2*.py
 
 # Set Python to run in unbuffered mode
 ENV PYTHONUNBUFFERED=1
