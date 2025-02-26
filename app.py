@@ -13,9 +13,18 @@ from utils.RuleEngine import RuleEngine
 from urllib.parse import quote_plus
 from datetime import datetime
 from pymongo import MongoClient
+# Import scipy's entropy function to make it available globally
+from scipy.stats import entropy
 
 # Import logger first so we can use it for startup logs
 from utils.logger_config import logger
+
+# Import the dockerfile_imports to ensure all necessary modules are available
+try:
+    import dockerfile_imports
+    logger.info("Successfully imported dockerfile_imports for dependency checks")
+except ImportError:
+    logger.warn("dockerfile_imports module not found - will continue without it")
 
 # Import WAF protocol buffers
 try:

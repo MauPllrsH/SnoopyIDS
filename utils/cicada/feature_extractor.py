@@ -2,6 +2,29 @@ import pandas as pd
 import re
 import numpy as np
 
+# Primary import for entropy
+try:
+    from scipy.stats import entropy  # Import entropy from scipy.stats
+except ImportError:
+    # Fallback implementation if scipy is not available
+    def entropy(pk, qk=None, base=None):
+        """Calculate entropy from probability distribution.
+        Simple fallback implementation in case scipy isn't available.
+        """
+        import numpy as np
+        
+        if qk is not None:
+            raise NotImplementedError("Only simple entropy calculation supported in fallback mode")
+            
+        pk = np.asarray(pk)
+        pk = pk / float(np.sum(pk))
+        if base is None:
+            base = np.e
+            
+        vec = pk * np.log(pk)
+        vec[~np.isfinite(vec)] = 0.0  # Handle zeros properly
+        return -np.sum(vec)
+
 
 def extract_features(data):
     """Enhanced feature extraction for improved attack detection - 
@@ -53,9 +76,21 @@ def extract_features(data):
         else 0
     )
     
-    # Fixed values instead of entropy calculations (which have dependency issues)
-    features['path_entropy'] = 0  # Constant value
-    features['query_entropy'] = 0  # Constant value
+    # Calculate entropy for path and query strings
+    def calculate_entropy(text):
+        if not isinstance(text, str) or len(text) < 2:
+            return 0
+        # Count character frequencies
+        text_bytes = text.encode('utf-8', errors='ignore')
+        if len(text_bytes) < 2:
+            return 0
+        # Calculate entropy using scipy's entropy function
+        freq = np.bincount(np.frombuffer(text_bytes, dtype=np.uint8))
+        freq = freq[freq > 0]  # Only use non-zero frequencies
+        return entropy(freq, base=2)
+
+    features['path_entropy'] = data['path'].apply(calculate_entropy)
+    features['query_entropy'] = data['query'].fillna('').apply(calculate_entropy)
     
     # Detect encoded content (base64, hex, url encoding)
     def has_encoded_content(text):
