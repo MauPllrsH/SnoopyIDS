@@ -30,9 +30,9 @@ def extract_features(data):
             data['path'].str.lower().str.contains(
             'select|from|where|union|insert|update|delete|drop|alter|exec|execute|sp_|xp_|declare|cast').astype(int),
             
-        # Improved XSS detection
-        'has_script_tags': data['body'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\(|eval\(|document\.').astype(int) |
-            data['query'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\(|eval\(|document\.').astype(int),
+        # Improved XSS detection - fixed regex to escape parentheses properly
+        'has_script_tags': data['body'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\\(|eval\\(|document\\.').astype(int) |
+            data['query'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\\(|eval\\(|document\\.').astype(int),
             
         # Enhanced file scanning detection
         'is_env_file_scan': data['path'].str.contains('\.env|\.config|\.cfg|\.ini|\.properties|\.yaml|\.yml|\.json|\.xml').astype(int),
@@ -49,10 +49,10 @@ def extract_features(data):
     
     # Add advanced detection features
     
-    # Suspicious user agent detection
+    # Suspicious user agent detection - fixed regex to use non-capturing groups
     features['suspicious_user_agent'] = data['headers'].apply(
         lambda x: 1 if isinstance(x, dict) and 'user-agent' in str(x).lower() and 
-        bool(re.search(r'(sqlmap|nikto|nessus|nmap|wpscan|burp|acunetix|gobuster|dirbuster|zgrab|masscan|python-requests|curl|wget|scanner|metasploit)',
+        bool(re.search(r'(?:sqlmap|nikto|nessus|nmap|wpscan|burp|acunetix|gobuster|dirbuster|zgrab|masscan|python-requests|curl|wget|scanner|metasploit)',
                       str(x.get('user-agent', '')).lower()))
         else 0
     )
@@ -89,8 +89,8 @@ def extract_features(data):
         # Base64 pattern
         if bool(re.search(r'[A-Za-z0-9+/]{20,}={0,2}', text)):
             return 1
-        # Excessive hex encoding
-        if bool(re.search(r'(%[0-9A-Fa-f]{2}){10,}', text)):
+        # Excessive hex encoding - fixed with non-capturing group
+        if bool(re.search(r'(?:%[0-9A-Fa-f]{2}){10,}', text)):
             return 1
         # URL encoded characters ratio
         encoded_chars = len(re.findall(r'%[0-9A-Fa-f]{2}', text))

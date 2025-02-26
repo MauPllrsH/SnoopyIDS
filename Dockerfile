@@ -31,5 +31,5 @@ RUN ls -la waf_pb2*.py
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Run the fix script and then start the app
-CMD ["sh", "-c", "python -u fix.py && python -u app.py"]
+# Run the app
+CMD ["python", "-u", "app.py"]
