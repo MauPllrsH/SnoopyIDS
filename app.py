@@ -7,6 +7,7 @@ import sys
 import gc
 import traceback
 import contextlib
+import warnings
 from dotenv import load_dotenv
 from concurrent import futures
 from utils.RuleEngine import RuleEngine
@@ -15,6 +16,9 @@ from datetime import datetime
 from pymongo import MongoClient
 # Import scipy's entropy function to make it available globally
 from scipy.stats import entropy
+
+# Suppress warnings about regex match groups in str.contains()
+warnings.filterwarnings('ignore', message=".*match groups.*", category=UserWarning)
 
 # Import logger first so we can use it for startup logs
 from utils.logger_config import logger
