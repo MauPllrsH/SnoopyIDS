@@ -1,7 +1,28 @@
 import pandas as pd
 import re
 import numpy as np
-from scipy.stats import entropy
+
+# Add local entropy function in case scipy.stats.entropy isn't available
+try:
+    from scipy.stats import entropy
+except ImportError:
+    def entropy(pk, qk=None, base=None):
+        """Calculate entropy from probability distribution.
+        Simple fallback implementation in case scipy isn't available.
+        """
+        import numpy as np
+        
+        if qk is not None:
+            raise NotImplementedError("Only simple entropy calculation supported in fallback mode")
+            
+        pk = np.asarray(pk)
+        pk = pk / float(np.sum(pk))
+        if base is None:
+            base = np.e
+            
+        vec = pk * np.log(pk)
+        vec[~np.isfinite(vec)] = 0.0  # Handle zeros properly
+        return -np.sum(vec)
 
 
 def extract_features(data):
