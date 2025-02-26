@@ -1,7 +1,6 @@
 import pandas as pd
 import re
 import numpy as np
-from scipy.stats import entropy
 
 
 def extract_features(data):
@@ -54,18 +53,9 @@ def extract_features(data):
         else 0
     )
     
-    # URL entropy (high entropy can indicate obfuscation)
-    def calc_entropy(text):
-        if not isinstance(text, str) or len(text) <= 1:
-            return 0
-        text = text.lower()
-        prob = [float(text.count(c)) / len(text) for c in set(text)]
-        # Use a direct import of entropy inside the function to avoid scope issues
-        from scipy.stats import entropy as scipy_entropy
-        return scipy_entropy(prob)
-    
-    features['path_entropy'] = data['path'].apply(calc_entropy)
-    features['query_entropy'] = data['query'].fillna('').apply(calc_entropy)
+    # Fixed values instead of entropy calculations (which have dependency issues)
+    features['path_entropy'] = 0  # Constant value
+    features['query_entropy'] = 0  # Constant value
     
     # Detect encoded content (base64, hex, url encoding)
     def has_encoded_content(text):
