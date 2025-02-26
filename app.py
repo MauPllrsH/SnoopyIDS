@@ -294,7 +294,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             raise e
 
     def ProcessLog(self, request, context):
-        """Process incoming log requests with minimal logging."""
+        """Process incoming log requests with enhanced debug logging."""
         try:
             # Split path and query
             path = request.path
@@ -315,7 +315,17 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 'client_id': request.client_id
             }
 
-            logger.info("=========== New Request Received =============")
+            # Enhanced request logging for debugging
+            logger.warning("=========== New Request Received =============")
+            logger.warning(f"METHOD: {request.method}")
+            logger.warning(f"PATH: {path}")
+            logger.warning(f"QUERY: {query}")
+            
+            # Log body content with careful truncation
+            body_log = request.body
+            if body_log and len(body_log) > 500:
+                body_log = body_log[:500] + " ... [TRUNCATED]"
+            logger.warning(f"BODY: {body_log}")
             # Check rules first
             matched_rule = self.rule_engine.check_rules(analysis_data)
             if matched_rule:

@@ -92,9 +92,9 @@ except ImportError:
         return features
 
 # Pre-compile regex patterns for better performance
-SQL_PATTERN = re.compile(r'select|from|where|union|insert|update|delete|drop|exec|execute|system|alter|cast|declare|create|xp_|\b1=1\b|--|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+', re.IGNORECASE)
-SCRIPT_PATTERN = re.compile(r'<script|javascript:|data:|alert\(|eval\(|setTimeout|setInterval|<alert|<alart|<img|<iframe|<svg|on\w+=|onerror|onclick|onload|document\.|\.cookie|\.innerhtml|fromcharcode|\\x[0-9a-f]{2}|&#x[0-9a-f]{2}', re.IGNORECASE)
-DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|file://|http://|https://|ftp://|\/etc\/|\/var\/|\/root\/|\.\.\/|\.\.%2f|%2e%2e|%252e%252e|\%[0-9a-fA-F]{2}', re.IGNORECASE)
+SQL_PATTERN = re.compile(r'select|from|where|union|insert|update|delete|drop|exec|execute|system|alter|cast|declare|create|xp_|\b1=1\b|--|\'|\"|\\|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+', re.IGNORECASE)
+SCRIPT_PATTERN = re.compile(r'<script|javascript:|data:|alert\(|eval\(|setTimeout|setInterval|<alert|<alart|<a\s+href|<img|<iframe|<svg|on\w+=|onerror|onclick|onload|document\.|\.cookie|\.innerhtml|fromcharcode|\\x[0-9a-f]{2}|&#x[0-9a-f]{2}|phishing|steal|hack|\.(php|jsp|aspx|sh|exe|bat)|\/\*|attack|hack', re.IGNORECASE)
+DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|steal\.php|attack\.co|hacker|malware|phishing|file://|http://|https://|ftp://|\/etc\/|\/var\/|\/root\/|\.\.\/|\.\.%2f|%2e%2e|%252e%252e|\%[0-9a-fA-F]{2}', re.IGNORECASE)
 FORMAT_STRING_PATTERN = re.compile(r'\%[0-9]*[xsdfo]|\%n|\%p|\%x|\%d|bash -i|\/bin\/sh|\/bin\/bash|nc\s+\-e', re.IGNORECASE)
 
 
@@ -135,9 +135,36 @@ class RuleEngine:
             ))
 
     def check_rules(self, data):
+        """Check if the request matches any rules, with debug logging"""
+        # Simple content-based checks before formal rule checking
+        body = data.get('body', '')
+        path = data.get('path', '')
+        query = data.get('query', '')
+        headers = data.get('headers', {})
+        
+        # Log check for debugging
+        logger.warning("==== QUICK CONTENT CHECK ====")
+        
+        # Direct check for a href tags - phishing commonly uses these
+        href_check = '<a href' in str(body).lower() or '<a href' in str(query).lower()
+        if href_check:
+            logger.warning("DETECTED: <a href> tag found - possible phishing attempt")
+            return "PHISHING_LINK_DETECTED"
+            
+        # Check for malicious domains and keywords
+        malicious_domains = ['attack.co', 'steal.php', 'hack', 'phishing', 'malware']
+        for domain in malicious_domains:
+            if domain in str(body).lower() or domain in str(path).lower() or domain in str(query).lower():
+                logger.warning(f"DETECTED: Malicious domain/keyword '{domain}' found")
+                return "MALICIOUS_DOMAIN_DETECTED"
+                
+        # Standard rule checking
         for rule in self.rules:
             if rule.check(data):
+                logger.warning(f"RULE MATCHED: {rule.name} (pattern: {rule.pattern} on field: {rule.field})")
                 return rule.name
+                
+        logger.warning("No rules matched this request")
         return None
 
     def add_rule(self, name, pattern, field):
@@ -415,6 +442,30 @@ class RuleEngine:
 
     def predict_anomaly(self, data):
         """Predict if request is anomalous with proper error handling."""
+        # Add detailed request logging for debugging
+        logger.warning("==== ANALYZING REQUEST ====")
+        logger.warning(f"METHOD: {data.get('method', 'UNKNOWN')}")
+        logger.warning(f"PATH: {data.get('path', 'UNKNOWN')}")
+        logger.warning(f"QUERY: {data.get('query', 'NONE')}")
+        
+        # Log body content with careful handling of potential None values
+        body = data.get('body', '')
+        if body is None:
+            body_log = 'NONE'
+        elif isinstance(body, str) and len(body) > 500:
+            body_log = body[:500] + "... [TRUNCATED]"
+        else:
+            body_log = str(body)
+        logger.warning(f"BODY: {body_log}")
+        
+        # Log headers (sanitized)
+        headers = data.get('headers', {})
+        if headers and isinstance(headers, dict):
+            sanitized_headers = {k: v for k, v in headers.items() 
+                               if k.lower() not in ('authorization', 'cookie', 'token')}
+            logger.warning(f"HEADERS: {sanitized_headers}")
+        
+        # Continue with regular anomaly detection
         if not self.model_loaded:
             logger.warning("ML model not loaded, cannot perform prediction")
             raise ValueError("ML model components are not loaded properly")
