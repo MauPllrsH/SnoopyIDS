@@ -1,38 +1,7 @@
 import pandas as pd
 import re
 import numpy as np
-import builtins
-import sys
-
-# Define a global entropy function - always available
-def calc_entropy(pk, qk=None, base=None):
-    """Fallback entropy function that will always be available globally"""
-    if not isinstance(pk, (list, np.ndarray)):
-        return 0
-        
-    pk = np.asarray(pk)
-    if np.sum(pk) == 0:
-        return 0
-        
-    pk = pk / float(np.sum(pk))
-    if base is None:
-        base = np.e
-        
-    vec = pk * np.log(pk)
-    vec[~np.isfinite(vec)] = 0.0  # Handle zeros properly
-    return -np.sum(vec)
-
-# Try to import scipy entropy, but fallback to our implementation if needed
-try:
-    from scipy.stats import entropy
-except ImportError:
-    # If not available, use our implementation
-    entropy = calc_entropy
-    # Add to builtins so it's always available
-    builtins.entropy = calc_entropy
-    
-# Make absolutely sure entropy is globally available
-globals()['entropy'] = entropy
+from scipy.stats import entropy
 
 
 def extract_features(data):
@@ -85,29 +54,15 @@ def extract_features(data):
     )
     
     # URL entropy (high entropy can indicate obfuscation)
-    def calc_text_entropy(text):
+    def calc_entropy(text):
         if not isinstance(text, str) or len(text) <= 1:
             return 0
-            
-        # Use a purely local implementation to avoid any import issues
-        try:
-            text = text.lower()
-            char_counts = {}
-            for c in text:
-                char_counts[c] = char_counts.get(c, 0) + 1
-                
-            total_chars = len(text)
-            probabilities = [count/total_chars for count in char_counts.values()]
-            
-            # Calculate entropy directly
-            return -sum(p * np.log(p) for p in probabilities)
-        except Exception:
-            # If anything fails, return a default value
-            return 0
+        text = text.lower()
+        prob = [float(text.count(c)) / len(text) for c in set(text)]
+        return entropy(prob)
     
-    # Use our direct implementation instead of relying on imported entropy
-    features['path_entropy'] = data['path'].apply(calc_text_entropy)
-    features['query_entropy'] = data['query'].fillna('').apply(calc_text_entropy)
+    features['path_entropy'] = data['path'].apply(calc_entropy)
+    features['query_entropy'] = data['query'].fillna('').apply(calc_entropy)
     
     # Detect encoded content (base64, hex, url encoding)
     def has_encoded_content(text):

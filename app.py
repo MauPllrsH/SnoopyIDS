@@ -172,39 +172,70 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 def emergency_predict(data, expected_features=82):
                     """Emergency prediction function that always produces correct feature count."""
                     import numpy as np
-                    import pandas as pd
                     
                     try:
                         logger.info(f"Using emergency prediction with {expected_features} features")
                         
-                        # Convert to DataFrame if needed
-                        if isinstance(data, dict):
-                            df = pd.DataFrame([data])
-                        else:
-                            df = data
-                            
-                        # Create basic features that don't require special processing
-                        features = np.zeros((1, expected_features))
-                        
-                        # Fill in a few basic features we can extract directly
-                        features[0, 0] = 1 if df['method'].iloc[0] == 'GET' else 0  # Method is GET
-                        features[0, 1] = 1 if df['method'].iloc[0] == 'POST' else 0  # Method is POST
-                        features[0, 2] = 1 if df['body'].iloc[0] else 0  # Has body
-                        features[0, 3] = 1 if df['query'].iloc[0] else 0  # Has query
-                        features[0, 4] = len(df['path'].iloc[0])  # Path length
-                        features[0, 5] = df['path'].iloc[0].count('/')  # Path depth
+                        # Try to use the global standard_features function first
+                        try:
+                            import builtins
+                            if hasattr(builtins, 'standard_features'):
+                                features = builtins.standard_features(data, expected_features)
+                                logger.info(f"Using global standard_features function: shape={features.shape}")
+                            else:
+                                # Fall back to loading the function from entropy module
+                                try:
+                                    import entropy
+                                    features = entropy.standard_features(data, expected_features)
+                                    logger.info(f"Using entropy.standard_features function: shape={features.shape}")
+                                except (ImportError, AttributeError):
+                                    # Fall back to simple zeros array
+                                    features = np.zeros((1, expected_features))
+                                    logger.warning("Using zeros array for features")
+                        except Exception as feat_error:
+                            logger.error(f"Error creating features: {str(feat_error)}")
+                            features = np.zeros((1, expected_features))
                         
                         # Make prediction
                         is_attack = False
                         confidence = 0.0
                         
+                        # Find the actual model with predict_proba
+                        def find_actual_model(model_obj, depth=0):
+                            if depth > 3:  # Limit recursion depth
+                                return None
+                                
+                            if hasattr(model_obj, 'predict_proba'):
+                                return model_obj
+                                
+                            if isinstance(model_obj, dict):
+                                for key, value in model_obj.items():
+                                    found = find_actual_model(value, depth+1)
+                                    if found:
+                                        return found
+                            return None
+                        
                         # Try to use the model directly
                         try:
-                            probs = self.rule_engine.ml_model.predict_proba(features)
-                            confidence = probs[0][1] if len(probs[0]) > 1 else probs[0][0]
-                            threshold = getattr(self.rule_engine, 'threshold', 0.5)
-                            is_attack = confidence > threshold
-                            logger.info(f"Emergency prediction successful: {is_attack} (confidence: {confidence:.4f})")
+                            # First try to find predict_proba in the model or nested dict
+                            actual_model = find_actual_model(self.rule_engine.ml_model)
+                            
+                            if actual_model:
+                                probs = actual_model.predict_proba(features)
+                                confidence = probs[0][1] if len(probs[0]) > 1 else probs[0][0]
+                                threshold = getattr(self.rule_engine, 'threshold', 0.5)
+                                is_attack = confidence > threshold
+                                logger.info(f"Emergency prediction successful: {is_attack} (confidence: {confidence:.4f})")
+                            else:
+                                # If no model with predict_proba found, try simple prediction
+                                model = self.rule_engine.ml_model
+                                if hasattr(model, 'predict'):
+                                    pred = model.predict(features)
+                                    is_attack = bool(pred[0])
+                                    confidence = 0.75 if is_attack else 0.25  # Default confidence
+                                    logger.info(f"Basic prediction successful: {is_attack}")
+                                else:
+                                    logger.error("No suitable prediction method found in model")
                         except Exception as e:
                             logger.error(f"Emergency prediction failed: {str(e)}")
                         

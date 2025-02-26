@@ -3,7 +3,6 @@ import logging
 import numpy as np
 from scipy.sparse import issparse
 
-# Use local import for SnoopyIDS compatibility
 from utils.cicada.feature_extractor import extract_features
 
 

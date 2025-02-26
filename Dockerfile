@@ -24,12 +24,31 @@ RUN python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. waf.proto
 # Verify the proto files exist
 RUN ls -la waf_pb2*.py
 
-# Verify imports work correctly
+# Verify imports work correctly and test our entropy module
 RUN python dockerfile_imports.py
+RUN python -c "import entropy; print('entropy module loaded')"
+
+# Make a pre-compiled version of startup.py to ensure it works
+RUN python -m py_compile startup.py
+
+# Make entropy.py executable
+RUN chmod +x entropy.py
+RUN chmod +x startup.py
+
+# Copy the preload and utility scripts to the container
+COPY preload.py .
+COPY entropy.py .
+COPY feature_fix.py . 
+COPY docker_start.sh .
+
+# Make sure scripts are executable
+RUN chmod +x preload.py
+RUN chmod +x docker_start.sh
+RUN chmod +x start.sh
 
 # Set Python to run in unbuffered mode
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Default command
-CMD ["python", "-u", "app.py"]
+CMD ["./docker_start.sh"]
