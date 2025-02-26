@@ -1,7 +1,11 @@
 import pandas as pd
 import re
 import numpy as np
+import warnings
 from utils.logger_config import logger
+
+# Suppress warnings about regex match groups in str.contains()
+warnings.filterwarnings('ignore', message=".*match groups.*", category=UserWarning)
 
 # Import entropy from scipy.stats
 from scipy.stats import entropy
