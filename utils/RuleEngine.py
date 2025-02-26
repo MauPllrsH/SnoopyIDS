@@ -145,6 +145,40 @@ class RuleEngine:
         # Log check for debugging
         logger.warning("==== QUICK CONTENT CHECK ====")
         
+        # Check for SQL Injection in JSON values
+        if body and isinstance(body, str) and (body.startswith('{') or body.startswith('[')):
+            try:
+                # Try to parse as JSON
+                import json
+                json_data = json.loads(body)
+                
+                # Recursively check all string values in JSON for SQL injection
+                def check_json_for_sql(obj):
+                    if isinstance(obj, dict):
+                        for key, value in obj.items():
+                            if isinstance(value, str):
+                                if SQL_PATTERN.search(value):
+                                    logger.warning(f"DETECTED: SQL injection in JSON field '{key}': {value}")
+                                    return True
+                            elif check_json_for_sql(value):
+                                return True
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            if check_json_for_sql(item):
+                                return True
+                    return False
+                
+                if check_json_for_sql(json_data):
+                    return "SQL_INJECTION_IN_JSON"
+            except json.JSONDecodeError:
+                # Not valid JSON, continue with normal checks
+                pass
+                
+        # Direct check for SQL keywords in the raw body
+        if SQL_PATTERN.search(str(body)):
+            logger.warning(f"DETECTED: SQL injection pattern in body")
+            return "SQL_INJECTION_DETECTED"
+        
         # Direct check for a href tags - phishing commonly uses these
         href_check = '<a href' in str(body).lower() or '<a href' in str(query).lower()
         if href_check:
