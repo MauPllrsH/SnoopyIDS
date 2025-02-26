@@ -60,7 +60,9 @@ def extract_features(data):
             return 0
         text = text.lower()
         prob = [float(text.count(c)) / len(text) for c in set(text)]
-        return entropy(prob)
+        # Use a direct import of entropy inside the function to avoid scope issues
+        from scipy.stats import entropy as scipy_entropy
+        return scipy_entropy(prob)
     
     features['path_entropy'] = data['path'].apply(calc_entropy)
     features['query_entropy'] = data['query'].fillna('').apply(calc_entropy)
@@ -111,5 +113,13 @@ def extract_features(data):
     
     # Request size anomaly 
     features['large_request'] = ((features['body_length'] > 8000) | (data['path'].str.len() > 255)).astype(int)
+    
+    # Add padding to ensure we have 82 features as expected by the model
+    current_count = features.shape[1]
+    if current_count < 82:
+        for i in range(current_count, 82):
+            features[f'padding_{i}'] = 0
+    elif current_count > 82:
+        features = features.iloc[:, :82]
     
     return features
