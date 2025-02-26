@@ -9,7 +9,10 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt scipy
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Verify scipy is installed with debug info
+RUN pip install --no-cache-dir scipy && python -c "import scipy; from scipy.stats import entropy; print('Scipy check: PASS')"
 
 # Copy the application
 COPY . .

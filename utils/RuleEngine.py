@@ -4,12 +4,64 @@ import sys
 import pandas as pd
 import numpy as np
 from scipy.sparse import issparse
-from scipy.stats import entropy  # Always use scipy's entropy function
 import joblib
 import traceback
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from utils.logger_config import logger
+
+# Import entropy from scipy with extensive error handling
+try:
+    logger.info("Attempting to import entropy from scipy.stats...")
+    # First try to import scipy itself to check it's installed
+    import scipy
+    logger.info(f"Successfully imported scipy version: {scipy.__version__}")
+    
+    # Then import the entropy function
+    from scipy.stats import entropy
+    logger.info("Successfully imported entropy from scipy.stats")
+    
+    # Test entropy function to ensure it works
+    test_data = np.array([0.25, 0.25, 0.25, 0.25])
+    test_result = entropy(test_data)
+    logger.info(f"Entropy function test result: {test_result}")
+except ImportError as e:
+    logger.error(f"Failed to import entropy from scipy: {str(e)}")
+    
+    # Define a fallback entropy function
+    logger.info("Defining fallback entropy function")
+    def entropy(pk, qk=None, base=None):
+        """Calculate entropy from probability distribution.
+        Fallback implementation when scipy is not available.
+        """
+        if qk is not None:
+            raise NotImplementedError("Only simple entropy calculation supported in fallback mode")
+        
+        logger.info(f"Using fallback entropy function with input shape: {np.shape(pk)}")
+        pk = np.asarray(pk)
+        pk = pk / float(np.sum(pk))
+        if base is None:
+            base = np.e
+        
+        # Prevent log(0) errors
+        log_func = np.log2 if base == 2 else np.log
+        vec = pk * log_func(pk + 1e-10)
+        vec[~np.isfinite(vec)] = 0.0
+        result = -np.sum(vec)
+        logger.info(f"Fallback entropy calculation result: {result}")
+        return result
+
+# Make entropy available globally        
+try:
+    import builtins
+    builtins.entropy = entropy
+    logger.info("Added entropy function to builtins for global access")
+except Exception as e:
+    logger.error(f"Failed to add entropy to builtins: {str(e)}")
+
+# Also explicitly define entropy in the global scope
+globals()['entropy'] = entropy
+logger.info("Added entropy function to globals")
 
 from utils.Rule import Rule
 

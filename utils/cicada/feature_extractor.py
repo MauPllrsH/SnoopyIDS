@@ -1,29 +1,17 @@
 import pandas as pd
 import re
 import numpy as np
+from utils.logger_config import logger
 
-# Primary import for entropy
+# Debug import
+logger.info("DEBUG: Importing feature_extractor.py")
+
+# Regular import with debug
 try:
-    from scipy.stats import entropy  # Import entropy from scipy.stats
-except ImportError:
-    # Fallback implementation if scipy is not available
-    def entropy(pk, qk=None, base=None):
-        """Calculate entropy from probability distribution.
-        Simple fallback implementation in case scipy isn't available.
-        """
-        import numpy as np
-        
-        if qk is not None:
-            raise NotImplementedError("Only simple entropy calculation supported in fallback mode")
-            
-        pk = np.asarray(pk)
-        pk = pk / float(np.sum(pk))
-        if base is None:
-            base = np.e
-            
-        vec = pk * np.log(pk)
-        vec[~np.isfinite(vec)] = 0.0  # Handle zeros properly
-        return -np.sum(vec)
+    from scipy.stats import entropy
+    logger.info("DEBUG: Successfully imported entropy from scipy.stats")
+except ImportError as e:
+    logger.error(f"DEBUG: Failed to import entropy from scipy.stats: {e}")
 
 
 def extract_features(data):
@@ -76,20 +64,50 @@ def extract_features(data):
         else 0
     )
     
-    # Calculate entropy for path and query strings
+    # Simple entropy calculation with debug logging
     def calculate_entropy(text):
+        logger.info(f"DEBUG: Starting entropy calculation for text: {text[:10]}...")
+        
         if not isinstance(text, str) or len(text) < 2:
             return 0
+        
         # Count character frequencies
-        text_bytes = text.encode('utf-8', errors='ignore')
-        if len(text_bytes) < 2:
+        try:
+            # Convert to bytes
+            text_bytes = text.encode('utf-8', errors='ignore')
+            if len(text_bytes) < 2:
+                return 0
+                
+            # Convert to array and count frequencies
+            byte_array = np.frombuffer(text_bytes, dtype=np.uint8)
+            freq = np.bincount(byte_array)
+            freq = freq[freq > 0]  # Only use non-zero frequencies
+            
+            # Check if entropy exists
+            logger.info("DEBUG: About to call entropy function")
+            logger.info(f"DEBUG: entropy exists in globals: {'entropy' in globals()}")
+            logger.info(f"DEBUG: entropy exists in locals: {'entropy' in locals()}")
+            logger.info(f"DEBUG: Type of freq: {type(freq)}")
+            
+            # Try to use entropy function
+            try:
+                result = entropy(freq, base=2)
+                logger.info(f"DEBUG: Entropy calculation successful: {result}")
+                return result
+            except Exception as e:
+                logger.error(f"DEBUG: Error in entropy calculation: {e}")
+                # Return 0 as fallback
+                return 0
+                
+        except Exception as e:
+            logger.error(f"DEBUG: Exception in calculate_entropy: {e}")
             return 0
-        # Calculate entropy using scipy's entropy function
-        freq = np.bincount(np.frombuffer(text_bytes, dtype=np.uint8))
-        freq = freq[freq > 0]  # Only use non-zero frequencies
-        return entropy(freq, base=2)
 
+    # Apply entropy calculation with debug logging
+    logger.info("DEBUG: Starting path entropy calculation")
     features['path_entropy'] = data['path'].apply(calculate_entropy)
+    
+    logger.info("DEBUG: Starting query entropy calculation")
     features['query_entropy'] = data['query'].fillna('').apply(calculate_entropy)
     
     # Detect encoded content (base64, hex, url encoding)
