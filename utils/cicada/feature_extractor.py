@@ -5,7 +5,8 @@ from scipy.stats import entropy
 
 
 def extract_features(data):
-    """Enhanced feature extraction for improved attack detection"""
+    """Enhanced feature extraction for improved attack detection - 
+    EXACT copy from Cicada for consistent feature extraction"""
     
     # Base features
     features = pd.DataFrame({

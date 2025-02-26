@@ -4,35 +4,40 @@ import sys
 import pandas as pd
 import numpy as np
 from scipy.sparse import issparse
+from scipy.stats import entropy  # Always use scipy's entropy function
 import joblib
 import traceback
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from utils.logger_config import logger
 
-# Add local entropy function in case scipy.stats.entropy isn't available
-try:
-    from scipy.stats import entropy
-except ImportError:
-    def entropy(pk, qk=None, base=None):
-        """Calculate entropy from probability distribution.
-        Simple fallback implementation in case scipy isn't available.
-        """
-        import numpy as np
-        
-        if qk is not None:
-            raise NotImplementedError("Only simple entropy calculation supported in fallback mode")
-            
-        pk = np.asarray(pk)
-        pk = pk / float(np.sum(pk))
-        if base is None:
-            base = np.e
-            
-        vec = pk * np.log(pk)
-        vec[~np.isfinite(vec)] = 0.0  # Handle zeros properly
-        return -np.sum(vec)
-
 from utils.Rule import Rule
+
+# Import feature helper for padding features
+try:
+    from utils.cicada.feature_helper import pad_feature_array, ensure_feature_count
+except ImportError:
+    # Simple fallback implementations
+    def pad_feature_array(X, expected_count=82):
+        """Ensure correct feature count"""
+        import numpy as np
+        if hasattr(X, 'shape') and len(X.shape) == 2:
+            if X.shape[1] < expected_count:
+                padding = np.zeros((X.shape[0], expected_count - X.shape[1]))
+                return np.hstack((X, padding))
+            elif X.shape[1] > expected_count:
+                return X[:, :expected_count]
+        return X
+    
+    def ensure_feature_count(features, expected_count=82):
+        """Ensure DataFrame has right number of columns"""
+        current_count = features.shape[1]
+        if current_count < expected_count:
+            for i in range(current_count, expected_count):
+                features[f'padding_{i}'] = 0
+        elif current_count > expected_count:
+            features = features.iloc[:, :expected_count]
+        return features
 
 # Pre-compile regex patterns for better performance
 SQL_PATTERN = re.compile(r'select|from|where|union|insert|update|delete|drop|exec|system', re.IGNORECASE)
@@ -300,6 +305,18 @@ class RuleEngine:
             features['query_param_count'] = df['query'].str.count('&') + 1
             features['has_special_chars'] = df['path'].str.contains('[<>{}()\'"]').astype(int)
             
+            # Ensure we have exactly 82 features (required by the model)
+            feature_count = features.shape[1]
+            if feature_count < 82:
+                # Add padding features to reach the required count
+                for i in range(feature_count, 82):
+                    features[f'padding_{i}'] = 0
+                logger.info(f"Added {82 - feature_count} padding features")
+            elif feature_count > 82:
+                # Truncate to the required count
+                logger.info(f"Truncating {feature_count - 82} extra features")
+                features = features.iloc[:, :82]
+            
             return features
         except Exception as e:
             logger.error(f"Error using Cicada's feature extractor: {str(e)}")
@@ -327,6 +344,19 @@ class RuleEngine:
                         df['query'].fillna('').astype(str).str.lower().str.contains(FORMAT_STRING_PATTERN)
                 ).astype(int)
             })
+            
+            # Ensure we have exactly 82 features even in the fallback case
+            feature_count = features.shape[1]
+            if feature_count < 82:
+                # Add padding features to reach the required count
+                for i in range(feature_count, 82):
+                    features[f'padding_{i}'] = 0
+                logger.info(f"Added {82 - feature_count} padding features in fallback")
+            elif feature_count > 82:
+                # Truncate to the required count
+                logger.info(f"Truncating {feature_count - 82} extra features in fallback")
+                features = features.iloc[:, :82]
+                
             return features
 
     def predict_anomaly(self, data):

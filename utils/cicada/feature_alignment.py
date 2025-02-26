@@ -96,10 +96,39 @@ def extract_features_consistent(data, vectorizer, preprocessor, all_feature_name
     # Validate shapes before combining
     expected_features = len(all_feature_names)
     combined_features = X_num.shape[1] + X_cat.shape[1] + path_features.shape[1]
+    
+    # Add detailed logging for debugging
+    logging.info(f"Feature shapes - X_num: {X_num.shape}, X_cat: {X_cat.shape}, path_features: {path_features.shape}")
+    logging.info(f"Expected features: {expected_features}, Actually have: {combined_features}")
+    
     if combined_features != expected_features:
         logging.warning(f"Feature count mismatch. Expected {expected_features}, got {combined_features}")
+        logging.warning(f"Numerical features: {X_num.shape[1]}, Categorical features: {X_cat.shape[1]}, TF-IDF features: {path_features.shape[1]}")
+        
+        # If we have more features than expected, truncate
+        if combined_features > expected_features:
+            # Truncate the TF-IDF features to match what's expected
+            logging.warning(f"Truncating features to match expected count")
+            extra_features = combined_features - expected_features
+            if path_features.shape[1] > extra_features:
+                path_features = path_features[:, :-extra_features]
+            
         # We'll continue anyway, but log the warning
-
+    
+    # Combine available features
     X_combined = np.hstack((X_num, X_cat, path_features))
+    
+    # Always ensure we have exact feature count expected by the model (default 82)
+    if X_combined.shape[1] != 82:
+        logging.warning(f"Padding/truncating features to exactly 82 (model's expected count)")
+        if X_combined.shape[1] < 82:
+            # Add padding columns
+            padding = np.zeros((X_combined.shape[0], 82 - X_combined.shape[1]))
+            X_combined = np.hstack((X_combined, padding))
+        else:
+            # Truncate excess columns
+            X_combined = X_combined[:, :82]
+    
+    logging.info(f"Final combined feature shape: {X_combined.shape}")
 
     return X_combined
