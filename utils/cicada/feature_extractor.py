@@ -28,15 +28,15 @@ def extract_features(data):
         
         # Enhanced SQL injection detection
         'has_sql_keywords': data['body'].fillna('').str.lower().str.contains(
-            'select|from|where|union|insert|update|delete|drop|alter|exec|execute|sp_|xp_|declare|cast').astype(int) |
+            'select|from|where|union|insert|update|delete|drop|alter|exec|execute|sp_|xp_|declare|cast|1=1|--|\bor\s+\d+=\d+|\bunion\s+select|\band\s+\d+=\d+').astype(int) |
             data['query'].fillna('').str.lower().str.contains(
-            'select|from|where|union|insert|update|delete|drop|alter|exec|execute|sp_|xp_|declare|cast').astype(int) |
+            'select|from|where|union|insert|update|delete|drop|alter|exec|execute|sp_|xp_|declare|cast|1=1|--|\bor\s+\d+=\d+|\bunion\s+select|\band\s+\d+=\d+').astype(int) |
             data['path'].str.lower().str.contains(
-            'select|from|where|union|insert|update|delete|drop|alter|exec|execute|sp_|xp_|declare|cast').astype(int),
+            'select|from|where|union|insert|update|delete|drop|alter|exec|execute|sp_|xp_|declare|cast|1=1|--|\bor\s+\d+=\d+|\bunion\s+select|\band\s+\d+=\d+').astype(int),
             
-        # Improved XSS detection - fixed regex to escape parentheses properly
-        'has_script_tags': data['body'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\\(|eval\\(|document\\.').astype(int) |
-            data['query'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\\(|eval\\(|document\\.').astype(int),
+        # Improved XSS detection with broader pattern coverage
+        'has_script_tags': data['body'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\\(|eval\\(|document\\.|<alert|<alart|onerror|onclick|onload|\\.cookie|\\.innerhtml|fromcharcode|\\\\x[0-9a-f]{2}|&#x[0-9a-f]{2}').astype(int) |
+            data['query'].fillna('').str.lower().str.contains('<script|javascript:|on\w+=|<img|<iframe|<svg|alert\\(|eval\\(|document\\.|<alert|<alart|onerror|onclick|onload|\\.cookie|\\.innerhtml|fromcharcode|\\\\x[0-9a-f]{2}|&#x[0-9a-f]{2}').astype(int),
             
         # Enhanced file scanning detection
         'is_env_file_scan': data['path'].str.contains('\.env|\.config|\.cfg|\.ini|\.properties|\.yaml|\.yml|\.json|\.xml').astype(int),

@@ -92,10 +92,10 @@ except ImportError:
         return features
 
 # Pre-compile regex patterns for better performance
-SQL_PATTERN = re.compile(r'select|from|where|union|insert|update|delete|drop|exec|system', re.IGNORECASE)
-SCRIPT_PATTERN = re.compile(r'<script|javascript:|data:|alert\(|eval\(|setTimeout|setInterval', re.IGNORECASE)
-DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|file://|http://|https://|ftp://|\/etc\/|\/var\/|\/root\/|\.\.\/|\%[0-9a-fA-F]{2}', re.IGNORECASE)
-FORMAT_STRING_PATTERN = re.compile(r'\%[0-9]*[xsdfo]|\%n|\%p|\%x|\%d', re.IGNORECASE)
+SQL_PATTERN = re.compile(r'select|from|where|union|insert|update|delete|drop|exec|execute|system|alter|cast|declare|create|xp_|\b1=1\b|--|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+', re.IGNORECASE)
+SCRIPT_PATTERN = re.compile(r'<script|javascript:|data:|alert\(|eval\(|setTimeout|setInterval|<alert|<alart|<img|<iframe|<svg|on\w+=|onerror|onclick|onload|document\.|\.cookie|\.innerhtml|fromcharcode|\\x[0-9a-f]{2}|&#x[0-9a-f]{2}', re.IGNORECASE)
+DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|file://|http://|https://|ftp://|\/etc\/|\/var\/|\/root\/|\.\.\/|\.\.%2f|%2e%2e|%252e%252e|\%[0-9a-fA-F]{2}', re.IGNORECASE)
+FORMAT_STRING_PATTERN = re.compile(r'\%[0-9]*[xsdfo]|\%n|\%p|\%x|\%d|bash -i|\/bin\/sh|\/bin\/bash|nc\s+\-e', re.IGNORECASE)
 
 
 class RuleEngine:
@@ -121,8 +121,8 @@ class RuleEngine:
         self.predict_function = None
         self.feature_names = []
         self.iso_model = None
-        self.threshold = 0.5
-        self.iso_weight = 0.3
+        self.threshold = 0.3  # Lowered threshold for higher sensitivity
+        self.iso_weight = 0.5  # Increased isolation forest weight for better anomaly detection
 
     def load_rules(self):
         self.rules = []
@@ -195,8 +195,9 @@ class RuleEngine:
                     self.vectorizer = package.get('vectorizer')
                     self.preprocessor = package.get('preprocessor')
                     self.feature_names = package.get('feature_names', [])
-                    self.threshold = package.get('threshold', 0.5)
-                    self.iso_weight = package.get('iso_weight', 0.3)
+                    # Override threshold and weight with more sensitive values
+                    self.threshold = 0.3  # Lowered threshold for better detection
+                    self.iso_weight = 0.5  # Increased weight for anomaly detection
                     
                     # Store the code and prediction function for direct execution
                     self.standalone_code = package.get('code', '')
@@ -264,8 +265,9 @@ class RuleEngine:
                 self.preprocessor = package.get('preprocessor')
                 self.feature_names = package.get('feature_names', [])
                 self.onehot_encoder = package.get('onehot_encoder')
-                self.threshold = package.get('threshold', 0.5)
-                self.iso_weight = package.get('iso_weight', 0.3)
+                # Override threshold and weight with more sensitive values
+                self.threshold = 0.3  # Lowered threshold for better detection
+                self.iso_weight = 0.5  # Increased weight for anomaly detection
                 
                 logger.info("Complete model package loaded successfully")
                 self.model_loaded = True
@@ -790,8 +792,10 @@ class RuleEngine:
                     
                     # Use advanced anomaly-boosted prediction
                     logger.debug("Using anomaly-boosted prediction")
-                    threshold = getattr(self, 'threshold', 0.5)
-                    iso_weight = getattr(self, 'iso_weight', 0.3)
+                    
+                    # Use lower threshold for better sensitivity
+                    threshold = getattr(self, 'threshold', 0.3)
+                    iso_weight = getattr(self, 'iso_weight', 0.5)  # Increased isolation forest weight
                     
                     # Get anomaly-boosted prediction
                     _, attack_probabilities = anomaly_boosted_predict(
@@ -847,10 +851,16 @@ class RuleEngine:
                     attack_probability = prediction_proba[0][1]
 
                     # Determine threshold based on request properties
+                    # Always use a lower threshold for higher sensitivity
+                    # This ensures we catch more potential attacks, even with minor indicators
+                    threshold = 0.3
+                    
+                    # Further lower threshold if request has suspicious indicators
                     has_query = X['has_query'].iloc[0] == 1
                     has_suspicious_content = (X['has_sql_keywords'].iloc[0] == 1 or
                                             X['has_script_tags'].iloc[0] == 1)
-                    threshold = 0.3 if (has_query or has_suspicious_content) else 0.5
+                    if has_query and has_suspicious_content:
+                        threshold = 0.2  # Even lower threshold for highly suspicious requests
 
                     logger.debug(f"Prediction probability (fallback): {attack_probability:.4f}, threshold: {threshold}")
                     return attack_probability > threshold, attack_probability

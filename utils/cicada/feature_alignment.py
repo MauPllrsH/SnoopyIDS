@@ -119,14 +119,16 @@ def extract_features_consistent(data, vectorizer, preprocessor, all_feature_name
     
     # Always ensure we have exact feature count expected by the model (default 82)
     if X_combined.shape[1] != 82:
-        logging.warning(f"Padding/truncating features to exactly 82 (model's expected count)")
+        logger.warning(f"Padding/truncating features to exactly 82 (model's expected count)")
         if X_combined.shape[1] < 82:
             # Add padding columns
             padding = np.zeros((X_combined.shape[0], 82 - X_combined.shape[1]))
             X_combined = np.hstack((X_combined, padding))
+            logger.info(f"Added padding to reach 82 features, new shape: {X_combined.shape}")
         else:
             # Truncate excess columns
             X_combined = X_combined[:, :82]
+            logger.info(f"Truncated to 82 features, new shape: {X_combined.shape}")
     
     logger.info(f"Final combined feature shape: {X_combined.shape}")
 
