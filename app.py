@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 from concurrent import futures
 from utils.RuleEngine import RuleEngine
 from urllib.parse import quote_plus
-from datetime import datetime
+from datetime import datetime, timezone
+import pytz
 from pymongo import MongoClient
 # Import scipy's entropy function to make it available globally
 from scipy.stats import entropy
@@ -269,8 +270,36 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
     def store_log_entry(self, analysis_data, is_attack, message, matched_rules=None):
         """Helper method to store log entries in MongoDB"""
         try:
+            # Convert timestamp to Central Time
+            try:
+                # Parse the timestamp string to a datetime object
+                # Handle both ISO format strings and datetime objects
+                if isinstance(analysis_data['timestamp'], str):
+                    # Try to parse as ISO format
+                    timestamp_dt = datetime.fromisoformat(analysis_data['timestamp'].replace('Z', '+00:00'))
+                else:
+                    # Already a datetime object
+                    timestamp_dt = analysis_data['timestamp']
+                
+                # Convert to Central Time
+                central_tz = pytz.timezone('US/Central')
+                if timestamp_dt.tzinfo is None:
+                    # If timestamp has no timezone info, assume it's UTC
+                    timestamp_dt = timestamp_dt.replace(tzinfo=timezone.utc)
+                    
+                # Convert to Central Time
+                central_time = timestamp_dt.astimezone(central_tz)
+                
+                # Format with timezone info
+                formatted_timestamp = central_time.isoformat()
+                logger.debug(f"Converted timestamp to Central Time: {formatted_timestamp}")
+            except Exception as ts_error:
+                logger.error(f"Error converting timestamp: {str(ts_error)}")
+                # Use original timestamp if conversion fails
+                formatted_timestamp = analysis_data['timestamp']
+            
             log_entry = {
-                'timestamp': analysis_data['timestamp'],
+                'timestamp': formatted_timestamp,
                 'type': analysis_data['type'],
                 'ip': analysis_data['ip'],
                 'method': analysis_data['method'],
