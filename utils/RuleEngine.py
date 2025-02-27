@@ -1012,23 +1012,25 @@ class RuleEngine:
                     rules_to_generate.append(('body', body_pattern))
                     logger.info(f"Generated body pattern: {body_pattern}")
 
-            # Create and store rules
+            # Create and store rules with descriptive names
             created_rules = []
             for field, pattern in rules_to_generate:
                 # Verify pattern is not empty and not too broad
                 if pattern and len(pattern) > 3:
-                    name = f"ML_Generated_Rule_{field}_{len(self.rules)}"
-                    logger.info(f"Creating new rule - Name: {name}, Field: {field}, Pattern: {pattern}")
+                    # Generate descriptive name based on pattern content
+                    rule_name = self.generate_descriptive_rule_name(pattern, field)
+                    
+                    logger.info(f"Creating new rule - Name: {rule_name}, Field: {field}, Pattern: {pattern}")
                     
                     # Check if similar rule already exists
                     exists = any(r.field == field and r.pattern == pattern for r in self.rules)
                     if not exists:
                         rule_id = self.add_rule(
-                            name=name,
+                            name=rule_name,
                             pattern=pattern,
                             field=field
                         )
-                        created_rules.append(name)
+                        created_rules.append(rule_name)
                     else:
                         logger.info(f"Similar rule already exists, skipping")
 
@@ -1037,6 +1039,107 @@ class RuleEngine:
         except Exception as e:
             logger.error(f"Error generating rules from anomaly: {str(e)}")
             return None
+            
+    def generate_descriptive_rule_name(self, pattern, field):
+        """Generate a descriptive name for a rule based on pattern content."""
+        try:
+            # Dictionaries of pattern identifiers for common attack types
+            sql_identifiers = ['select', 'from', 'where', 'union', 'insert', 'update', 'delete', 
+                              'drop', 'exec', 'execute', 'system', 'alter', 'cast', 'declare', 
+                              'create', '1=1', '--', '\'', '\"', '\\', 'or 1=1']
+                              
+            xss_identifiers = ['<script', 'javascript:', 'alert(', 'eval(', 'onerror', 'onclick',
+                              'onload', '.cookie', 'document.', '.innerhtml', 'fromcharcode',
+                              '<img', '<iframe', '<svg']
+                              
+            path_traversal_identifiers = ['\\.\\.\\/','../','..%2f', '%2e%2e', '%252e%252e']
+            
+            cmd_injection_identifiers = ['bash -i', '/bin/sh', '/bin/bash', 'nc -e']
+            
+            # Deobfuscate pattern by removing escaping for checking purposes
+            check_pattern = pattern.replace('\\', '')
+            check_pattern = check_pattern.lower()
+            
+            # Base name components
+            attack_type = ""
+            specific_marker = ""
+            
+            # Check for SQL injection
+            if any(ident in check_pattern for ident in sql_identifiers):
+                attack_type = "SQL_INJECTION"
+                # Find which specific SQL technique is used
+                for ident in sql_identifiers:
+                    if ident in check_pattern:
+                        specific_marker = ident.upper().replace(' ', '_')
+                        break
+            
+            # Check for XSS
+            elif any(ident in check_pattern for ident in xss_identifiers):
+                attack_type = "XSS"
+                # Find which specific XSS technique is used
+                for ident in xss_identifiers:
+                    if ident in check_pattern:
+                        clean_ident = ident.replace('<', '').replace('(', '').replace('.', '_')
+                        specific_marker = clean_ident.upper()
+                        break
+            
+            # Check for path traversal
+            elif any(ident in check_pattern for ident in path_traversal_identifiers):
+                attack_type = "PATH_TRAVERSAL"
+                specific_marker = "DIRECTORY"
+            
+            # Check for command injection
+            elif any(ident in check_pattern for ident in cmd_injection_identifiers):
+                attack_type = "CMD_INJECTION"
+                for ident in cmd_injection_identifiers:
+                    if ident in check_pattern:
+                        clean_ident = ident.replace(' ', '_').replace('/', '_')
+                        specific_marker = clean_ident.upper()
+                        break
+            
+            # If no specific type identified, use field and pattern characteristics
+            if not attack_type:
+                # Look for other suspicious patterns
+                if "cookie" in check_pattern:
+                    attack_type = "COOKIE_MANIPULATION"
+                elif "http://" in check_pattern or "https://" in check_pattern:
+                    attack_type = "MALICIOUS_URL"
+                elif "php" in check_pattern or "aspx" in check_pattern or "jsp" in check_pattern:
+                    attack_type = "SUSPICIOUS_ENDPOINT"
+                else:
+                    # Default to a general pattern with field name
+                    attack_type = "ANOMALOUS_PATTERN"
+            
+            # If we still don't have a specific marker, extract one from the pattern
+            if not specific_marker:
+                # Remove common regex escape sequences and extract meaningful content
+                cleaned = re.sub(r'\\[.+*?^$(){}|[\]]', '', pattern)
+                # Extract up to 10 alphanumeric characters
+                marker_match = re.search(r'[a-zA-Z0-9_]{3,10}', cleaned)
+                if marker_match:
+                    specific_marker = marker_match.group(0).upper()
+                else:
+                    # Fallback to field name and a hash of the pattern for uniqueness
+                    specific_marker = field.upper() + "_" + str(abs(hash(pattern)) % 1000)
+            
+            # Combine components into a descriptive name
+            # Format: ATTACKTYPE_FIELD_SPECIFICMARKER
+            rule_name = f"{attack_type}_{field.upper()}_{specific_marker}"
+            
+            # Ensure name is valid and not too long
+            rule_name = re.sub(r'[^A-Z0-9_]', '', rule_name)
+            if len(rule_name) > 50:  # Reasonable length limit
+                rule_name = rule_name[:50]
+            
+            # Add a unique identifier to avoid duplicates
+            rule_name += f"_{len(self.rules) % 1000:03d}"
+            
+            return rule_name
+            
+        except Exception as e:
+            # Fallback to default naming in case of errors
+            logger.error(f"Error generating descriptive rule name: {str(e)}")
+            return f"ANOMALY_{field.upper()}_{len(self.rules)}"
 
     def extract_pattern_from_content(self, *contents, base_pattern=None):
         """Extract patterns from content that matched ML features."""
