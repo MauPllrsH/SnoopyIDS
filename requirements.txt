@@ -8,4 +8,5 @@ scikit-learn~=1.5.2
 pandas~=2.2.3
 numpy~=2.0.2
 xgboost
-scipy~=1.13.1
+scipy>=1.11.3,<2.0.0  # Ensure compatible scipy version
+pytz>=2023.3  # For timezone handling

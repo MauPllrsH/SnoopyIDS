@@ -1,97 +1,267 @@
 import sys
 
-def log_exception(e):
-    print(f"Exception occurred: {str(e)}", file=sys.stderr)
-    print("Exception type:", type(e), file=sys.stderr)
-    print("Exception traceback:", file=sys.stderr)
-    import traceback
-    traceback.print_exc()
+import json
+import grpc
+import os
+import sys
+import gc
+import traceback
+import contextlib
+import warnings
+from dotenv import load_dotenv
+from concurrent import futures
+from utils.RuleEngine import RuleEngine
+from urllib.parse import quote_plus
+from datetime import datetime, timezone
+import pytz
+from pymongo import MongoClient
+# Import scipy's entropy function to make it available globally
+from scipy.stats import entropy
 
-print("Starting application...")
+# Suppress warnings about regex match groups in str.contains()
+warnings.filterwarnings('ignore', message=".*match groups.*", category=UserWarning)
+
+# Import logger first so we can use it for startup logs
+from utils.logger_config import logger
+
+# Import the dockerfile_imports to ensure all necessary modules are available
 try:
-    print("Importing modules...")
-    import json
-    import grpc
-    import os
-    from dotenv import load_dotenv
-    from concurrent import futures
-    from utils.RuleEngine import RuleEngine
+    import dockerfile_imports
+    logger.info("Successfully imported dockerfile_imports for dependency checks")
+except ImportError:
+    logger.warn("dockerfile_imports module not found - will continue without it")
+
+# Import WAF protocol buffers
+try:
     import waf_pb2
     import waf_pb2_grpc
-    from urllib.parse import quote_plus
-    from datetime import datetime
-    from utils.logger_config import logger
-    from pymongo import MongoClient
-    print("All modules imported successfully")
+    logger.info("WAF protocol buffers imported successfully")
+except ImportError as e:
+    logger.error(f"Failed to import WAF protocol buffer modules: {str(e)}")
+    logger.error("Make sure the WAF protocol buffers are compiled")
+    raise
 
+def log_exception(e):
+    """Log exception details using the configured logger"""
+    logger.error(f"Exception occurred: {str(e)}")
+    logger.error(f"Exception type: {type(e)}")
+    logger.error("Exception traceback:")
+    for line in traceback.format_exc().split("\n"):
+        logger.error(line)
+
+# Start application
+logger.info("Starting application...")
+try:
+    # Load environment variables
     load_dotenv()
-    print("Environment variables loaded")
+    logger.info("Environment variables loaded")
 
     # Test environment variables
     required_vars = ['MONGO_USER', 'MONGO_PASSWORD', 'MONGO_PORT', 'MONGO_DATABASE']
     for var in required_vars:
         value = os.getenv(var)
-        print(f"{var}: {'Present' if value else 'Missing'}")
+        logger.info(f"{var}: {'Present' if value else 'Missing'}")
 
 except Exception as e:
     log_exception(e)
     raise e
 
 
-class WAFServicer(waf_pb2_grpc.WAFServicer):
+class IDSServicer(waf_pb2_grpc.WAFServicer):
     def __init__(self):
         try:
-            print("Initializing WAFServicer...")
+            logger.info("Initializing IDSServicer...")
             mongo_user = quote_plus(os.getenv('MONGO_USER'))
             mongo_password = quote_plus(os.getenv('MONGO_PASSWORD'))
             mongo_port = os.getenv('MONGO_PORT')
             mongo_database = os.getenv('MONGO_DATABASE')
 
-            mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
-            print(f"Connecting to MongoDB at: {mongo_url}")
-
-            self.mongo_client = MongoClient(mongo_url)
+            # Create mongo_url without logging the credentials
+            mongo_url = f"mongodb://{mongo_user}:****@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
+            logger.info(f"Connecting to MongoDB at: {mongo_url.replace(mongo_user, '****')}")
+            
+            # Create the actual connection URL (not logged)
+            actual_mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
+            
+            # Set up MongoDB with connection pooling and timeouts
+            self.mongo_client = MongoClient(
+                actual_mongo_url,
+                connectTimeoutMS=5000,
+                serverSelectionTimeoutMS=5000,
+                maxPoolSize=20
+            )
             self.db = self.mongo_client[mongo_database]
-            print("MongoDB client created")
+            logger.info("MongoDB client created")
 
             # Test the MongoDB connection
             collections = self.db.list_collection_names()
-            print(f"Available collections: {collections}")
+            logger.info(f"Available collections: {collections}")
 
             # Create logs collection if it doesn't exist
             if 'logs' not in collections:
-                print("Creating logs collection...")
+                logger.info("Creating logs collection...")
                 self.db.create_collection('logs')
-                print("Logs collection created")
+                logger.info("Logs collection created")
             else:
-                print("Logs collection already exists")
+                logger.info("Logs collection already exists")
 
-            # Add prevention mode state and collection
-            self.prevention_mode = False
-            if 'config' not in collections:
-                print("Creating config collection...")
-                self.db.create_collection('config')
-                self.db.config.insert_one({'key': 'prevention_mode', 'enabled': False})
-                print("Config collection created")
-            else:
-                # Load prevention mode state from MongoDB
-                config = self.db.config.find_one({'key': 'prevention_mode'})
-                if config:
-                    self.prevention_mode = config['enabled']
-                    print(f"Prevention mode loaded: {self.prevention_mode}")
-
-            # Initialize RuleEngine
-            print("Initializing RuleEngine...")
-            self.rule_engine = RuleEngine(mongo_url, 'ids_database', 'rules')
+            # Initialize RuleEngine (use same credentials but don't pass them directly)
+            logger.info("Initializing RuleEngine...")
+            self.rule_engine = RuleEngine(actual_mongo_url, mongo_database, 'rules')
             self.rule_engine.load_rules()
-            print("Rules loaded")
-
-            self.rule_engine.load_ml_model(
-                model_path='models/model_info.joblib',
-                vectorizer_path='models/vectorizer.joblib',
-                preprocessor_path='models/preprocessor.joblib',
-            )
-            print("ML model loaded")
+            logger.info("Rules loaded")
+            
+            # Load ML model components with much more robust error handling
+            try:
+                # First check what model files actually exist
+                model_dir = 'model'
+                standalone_path = os.path.join(model_dir, 'standalone_model.joblib')
+                complete_package_path = os.path.join(model_dir, 'complete_model_package.joblib')
+                model_info_path = os.path.join(model_dir, 'model_info.joblib')
+                vectorizer_path = os.path.join(model_dir, 'vectorizer.joblib')
+                preprocessor_path = os.path.join(model_dir, 'preprocessor.joblib')
+                
+                # Log what model files exist
+                logger.info(f"Checking for model files:")
+                logger.info(f"- standalone_model.joblib: {os.path.exists(standalone_path)}")
+                logger.info(f"- complete_model_package.joblib: {os.path.exists(complete_package_path)}")
+                logger.info(f"- model_info.joblib: {os.path.exists(model_info_path)}")
+                logger.info(f"- vectorizer.joblib: {os.path.exists(vectorizer_path)}")
+                logger.info(f"- preprocessor.joblib: {os.path.exists(preprocessor_path)}")
+                
+                # First try standalone model (best option)
+                if os.path.exists(standalone_path):
+                    logger.info(f"Loading standalone model from {standalone_path}")
+                    try:
+                        self.rule_engine.load_ml_model(model_path=standalone_path)
+                        logger.info("Standalone model loaded successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to load standalone model: {str(e)}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error traceback: {traceback.format_exc()}")
+                        # Continue to next option
+                
+                # Then try complete package
+                elif os.path.exists(complete_package_path):
+                    logger.info(f"Loading complete package from {complete_package_path}")
+                    try:
+                        self.rule_engine.load_ml_model(model_path=complete_package_path)
+                        logger.info("Complete package loaded successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to load complete package: {str(e)}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error traceback: {traceback.format_exc()}")
+                        # Continue to next option
+                
+                # Finally try individual components
+                elif os.path.exists(model_info_path) and os.path.exists(vectorizer_path):
+                    logger.info("Loading individual model components")
+                    try:
+                        self.rule_engine.load_ml_model(
+                            model_path=model_info_path,
+                            vectorizer_path=vectorizer_path,
+                            preprocessor_path=preprocessor_path if os.path.exists(preprocessor_path) else None
+                        )
+                        logger.info("Individual components loaded successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to load individual components: {str(e)}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error traceback: {traceback.format_exc()}")
+                
+                else:
+                    # No model files found
+                    logger.error("No model files found in the model directory")
+                    logger.error("Please ensure model files are copied to the correct location")
+                    # Continue execution, but model_loaded will be False
+            
+            except Exception as ml_error:
+                logger.error(f"Failed to load any ML model: {str(ml_error)}")
+                logger.warning("System will fall back to rule-based detection only")
+                
+            # Verify the model was loaded correctly
+            if hasattr(self.rule_engine, 'model_loaded') and self.rule_engine.model_loaded:
+                logger.info("Model successfully loaded and ready for prediction")
+                
+                # Add the emergency prediction function to handle any feature count issues
+                def emergency_predict(data, expected_features=82):
+                    """Emergency prediction function that always produces correct feature count."""
+                    import numpy as np
+                    
+                    try:
+                        logger.info(f"Using emergency prediction with {expected_features} features")
+                        
+                        # Try to use the global standard_features function first
+                        try:
+                            import builtins
+                            if hasattr(builtins, 'standard_features'):
+                                features = builtins.standard_features(data, expected_features)
+                                logger.info(f"Using global standard_features function: shape={features.shape}")
+                            else:
+                                # Fall back to loading the function from entropy module
+                                try:
+                                    import entropy
+                                    features = entropy.standard_features(data, expected_features)
+                                    logger.info(f"Using entropy.standard_features function: shape={features.shape}")
+                                except (ImportError, AttributeError):
+                                    # Fall back to simple zeros array
+                                    features = np.zeros((1, expected_features))
+                                    logger.warning("Using zeros array for features")
+                        except Exception as feat_error:
+                            logger.error(f"Error creating features: {str(feat_error)}")
+                            features = np.zeros((1, expected_features))
+                        
+                        # Make prediction
+                        is_attack = False
+                        confidence = 0.0
+                        
+                        # Find the actual model with predict_proba
+                        def find_actual_model(model_obj, depth=0):
+                            if depth > 3:  # Limit recursion depth
+                                return None
+                                
+                            if hasattr(model_obj, 'predict_proba'):
+                                return model_obj
+                                
+                            if isinstance(model_obj, dict):
+                                for key, value in model_obj.items():
+                                    found = find_actual_model(value, depth+1)
+                                    if found:
+                                        return found
+                            return None
+                        
+                        # Try to use the model directly
+                        try:
+                            # First try to find predict_proba in the model or nested dict
+                            actual_model = find_actual_model(self.rule_engine.ml_model)
+                            
+                            if actual_model:
+                                probs = actual_model.predict_proba(features)
+                                confidence = probs[0][1] if len(probs[0]) > 1 else probs[0][0]
+                                threshold = getattr(self.rule_engine, 'threshold', 0.5)
+                                is_attack = confidence > threshold
+                                logger.info(f"Emergency prediction successful: {is_attack} (confidence: {confidence:.4f})")
+                            else:
+                                # If no model with predict_proba found, try simple prediction
+                                model = self.rule_engine.ml_model
+                                if hasattr(model, 'predict'):
+                                    pred = model.predict(features)
+                                    is_attack = bool(pred[0])
+                                    confidence = 0.75 if is_attack else 0.25  # Default confidence
+                                    logger.info(f"Basic prediction successful: {is_attack}")
+                                else:
+                                    logger.error("No suitable prediction method found in model")
+                        except Exception as e:
+                            logger.error(f"Emergency prediction failed: {str(e)}")
+                        
+                        return is_attack, confidence
+                    except Exception as e:
+                        logger.error(f"Emergency prediction function error: {str(e)}")
+                        return False, 0.0
+                
+                # Attach the emergency prediction function to the rule engine
+                self.rule_engine.emergency_predict = emergency_predict
+            else:
+                logger.error("Model did not load correctly - prediction will not be available")
 
         except Exception as e:
             log_exception(e)
@@ -100,8 +270,36 @@ class WAFServicer(waf_pb2_grpc.WAFServicer):
     def store_log_entry(self, analysis_data, is_attack, message, matched_rules=None):
         """Helper method to store log entries in MongoDB"""
         try:
+            # Convert timestamp to Central Time
+            try:
+                # Parse the timestamp string to a datetime object
+                # Handle both ISO format strings and datetime objects
+                if isinstance(analysis_data['timestamp'], str):
+                    # Try to parse as ISO format
+                    timestamp_dt = datetime.fromisoformat(analysis_data['timestamp'].replace('Z', '+00:00'))
+                else:
+                    # Already a datetime object
+                    timestamp_dt = analysis_data['timestamp']
+                
+                # Convert to Central Time
+                central_tz = pytz.timezone('US/Central')
+                if timestamp_dt.tzinfo is None:
+                    # If timestamp has no timezone info, assume it's UTC
+                    timestamp_dt = timestamp_dt.replace(tzinfo=timezone.utc)
+                    
+                # Convert to Central Time
+                central_time = timestamp_dt.astimezone(central_tz)
+                
+                # Format with timezone info
+                formatted_timestamp = central_time.isoformat()
+                logger.debug(f"Converted timestamp to Central Time: {formatted_timestamp}")
+            except Exception as ts_error:
+                logger.error(f"Error converting timestamp: {str(ts_error)}")
+                # Use original timestamp if conversion fails
+                formatted_timestamp = analysis_data['timestamp']
+            
             log_entry = {
-                'timestamp': analysis_data['timestamp'],
+                'timestamp': formatted_timestamp,
                 'type': analysis_data['type'],
                 'ip': analysis_data['ip'],
                 'method': analysis_data['method'],
@@ -117,21 +315,15 @@ class WAFServicer(waf_pb2_grpc.WAFServicer):
                 }
             }
             result = self.db.logs.insert_one(log_entry)
-            logger.info(f"Log entry stored with ID: {result.inserted_id}")
-            
-            # Verify the entry was stored
-            stored_entry = self.db.logs.find_one({'_id': result.inserted_id})
-            if stored_entry:
-                logger.info("Successfully verified log entry storage")
-            else:
-                logger.error("Failed to verify log entry storage")
+            logger.debug(f"Log entry stored with ID: {result.inserted_id}")
                 
         except Exception as e:
             logger.error(f"Failed to store log in MongoDB: {str(e)}")
             logger.exception("Full traceback:")
+            raise e
 
     def ProcessLog(self, request, context):
-        """Process incoming log requests with minimal logging."""
+        """Process incoming log requests with enhanced debug logging."""
         try:
             # Split path and query
             path = request.path
@@ -152,7 +344,17 @@ class WAFServicer(waf_pb2_grpc.WAFServicer):
                 'client_id': request.client_id
             }
 
-            logger.info("=========== New Request Received =============")
+            # Enhanced request logging for debugging
+            logger.warning("=========== New Request Received =============")
+            logger.warning(f"METHOD: {request.method}")
+            logger.warning(f"PATH: {path}")
+            logger.warning(f"QUERY: {query}")
+            
+            # Log body content with careful truncation
+            body_log = request.body
+            if body_log and len(body_log) > 500:
+                body_log = body_log[:500] + " ... [TRUNCATED]"
+            logger.warning(f"BODY: {body_log}")
             # Check rules first
             matched_rule = self.rule_engine.check_rules(analysis_data)
             if matched_rule:
@@ -168,16 +370,51 @@ class WAFServicer(waf_pb2_grpc.WAFServicer):
                     injection_detected=True,
                     message=message,
                     matched_rules=[matched_rule],
-                    should_block=self.prevention_mode  # Add blocking decision
+                    should_block=False
                 )
 
             # If no rule matches, use ML analysis
             try:
-                is_anomaly, confidence = self.rule_engine.predict_anomaly(analysis_data)
+                try:
+                    # Check if model is loaded before attempting prediction
+                    if not self.rule_engine.model_loaded:
+                        logger.warning("Cannot use ML prediction - model not loaded")
+                        # Return as not an attack
+                        is_anomaly, confidence = False, 0.0
+                    else:
+                        # Use ML prediction if model is loaded
+                        logger.debug("Attempting ML prediction")
+                        try:
+                            is_anomaly, confidence = self.rule_engine.predict_anomaly(analysis_data)
+                            logger.debug(f"ML prediction result: is_anomaly={is_anomaly}, confidence={confidence:.4f}")
+                        except Exception as advanced_error:
+                            # Log error
+                            logger.error(f"Error in advanced prediction: {str(advanced_error)}")
+                            
+                            # Try emergency prediction if available
+                            if hasattr(self.rule_engine, 'emergency_predict'):
+                                try:
+                                    logger.warning("Attempting emergency prediction")
+                                    is_anomaly, confidence = self.rule_engine.emergency_predict(analysis_data)
+                                    logger.warning(f"Emergency prediction result: is_anomaly={is_anomaly}, confidence={confidence:.4f}")
+                                except Exception as e:
+                                    logger.error(f"Emergency prediction failed: {str(e)}")
+                                    # Default to not an attack
+                                    is_anomaly, confidence = False, 0.0
+                            else:
+                                # Default to not an attack
+                                is_anomaly, confidence = False, 0.0
+                                raise advanced_error  # Re-raise to be caught by outer catch
+                except Exception as pred_error:
+                    # Log but continue with non-attack result
+                    logger.error(f"Error during ML prediction: {str(pred_error)}")
+                    logger.error(f"Prediction error type: {type(pred_error).__name__}")
+                    logger.error(f"Prediction error traceback: {traceback.format_exc()}")
+                    # Default to not an attack
+                    is_anomaly, confidence = False, 0.0
                 if is_anomaly:
                     new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
-                    message = f"🤖 ML model detected anomaly" + (
-                        f". Generated rule: {new_rule_name}" if new_rule_name else "")
+                    message = f"🤖 ML model detected anomaly" + (f". Generated rule: {new_rule_name}" if new_rule_name else "")
 
                     logger.warning(f"\n🚨 Attack detected (ML confidence: {confidence:.2f})")
                     logger.warning(f"Request: {request.method} {path}?{query}")
@@ -192,7 +429,7 @@ class WAFServicer(waf_pb2_grpc.WAFServicer):
                         injection_detected=True,
                         message=message,
                         matched_rules=[new_rule_name] if new_rule_name else [],
-                        should_block=self.prevention_mode  # Add blocking decision
+                        should_block=False
                     )
                 else:
                     message = "No anomalies detected"
@@ -225,6 +462,10 @@ class WAFServicer(waf_pb2_grpc.WAFServicer):
             message = f"Error processing request: {str(e)}"
             logger.error(f"Request processing error: {str(e)}")
 
+            # Store error log if we have analysis_data
+            if 'analysis_data' in locals():
+                self.store_log_entry(analysis_data, False, message)
+
             return waf_pb2.ProcessResult(
                 injection_detected=False,
                 message=message,
@@ -232,33 +473,40 @@ class WAFServicer(waf_pb2_grpc.WAFServicer):
                 should_block=False
             )
 
-    def GetPreventionMode(self, request, context):
-        return waf_pb2.PreventionModeResponse(enabled=self.prevention_mode)
-
-    def SetPreventionMode(self, request, context):
-        self.prevention_mode = request.enabled
-        # Update MongoDB
-        self.db.config.update_one(
-            {'key': 'prevention_mode'},
-            {'$set': {'enabled': request.enabled}},
-            upsert=True
-        )
-        return waf_pb2.PreventionModeResponse(enabled=self.prevention_mode)
-
     def HealthCheck(self, request, context):
         return waf_pb2.HealthCheckResponse(is_healthy=True)
-
+        
+    def GetPreventionMode(self, request, context):
+        return waf_pb2.PreventionModeResponse(enabled=False)
+        
+    def SetPreventionMode(self, request, context):
+        return waf_pb2.PreventionModeResponse(enabled=False)
+    
 def serve():
     try:
-        print("Starting server...")
-        # Load SSL/TLS certificates
-        with open('certs/server.key', 'rb') as f:
+        logger.info("Starting server...")
+        
+        # Load SSL/TLS certificates with validation
+        cert_files = {
+            'private_key': 'certs/server.key',
+            'certificate_chain': 'certs/server.crt',
+            'root_certificates': 'certs/ca.crt'
+        }
+        
+        # Check if certificate files exist
+        for name, path in cert_files.items():
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Certificate file not found: {path}")
+                
+        # Load the certificate files
+        with open(cert_files['private_key'], 'rb') as f:
             private_key = f.read()
-        with open('certs/server.crt', 'rb') as f:
+        with open(cert_files['certificate_chain'], 'rb') as f:
             certificate_chain = f.read()
-        with open('certs/ca.crt', 'rb') as f:
+        with open(cert_files['root_certificates'], 'rb') as f:
             root_certificates = f.read()
-        print("Certificates loaded")
+            
+        logger.info("Certificates loaded successfully")
 
         server_credentials = grpc.ssl_server_credentials(
             [(private_key, certificate_chain)],
@@ -267,15 +515,37 @@ def serve():
         )
 
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        waf_pb2_grpc.add_WAFServicer_to_server(WAFServicer(), server)
+        waf_pb2_grpc.add_WAFServicer_to_server(IDSServicer(), server)
         
         server_address = '0.0.0.0:50051'
         server.add_secure_port(server_address, server_credentials)
-        print("Server configured")
+        logger.info("Server configured")
 
         server.start()
-        print("Server started successfully")
+        logger.info("Server started successfully")
         
+        # Register cleanup handler to properly close MongoDB connections on shutdown
+        import atexit
+        
+        def cleanup():
+            """Clean up resources when server is shutting down"""
+            logger.info("Server shutting down, cleaning up resources...")
+            # Close any active MongoDB connections
+            try:
+                # Find all instances of IDSServicer
+                for servicer in [s for s in gc.get_objects() if isinstance(s, IDSServicer)]:
+                    if hasattr(servicer, 'mongo_client') and servicer.mongo_client:
+                        servicer.mongo_client.close()
+                        logger.info("Closed MongoDB connection")
+                    if hasattr(servicer, 'rule_engine') and hasattr(servicer.rule_engine, 'client'):
+                        servicer.rule_engine.client.close()
+                        logger.info("Closed RuleEngine MongoDB connection")
+            except Exception as e:
+                logger.error(f"Error during cleanup: {str(e)}")
+        
+        atexit.register(cleanup)
+        
+        # Wait for server termination
         server.wait_for_termination()
         
     except Exception as e:
