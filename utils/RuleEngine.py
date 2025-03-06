@@ -121,8 +121,8 @@ class RuleEngine:
         self.predict_function = None
         self.feature_names = []
         self.iso_model = None
-        self.threshold = 0.3  # Lowered threshold for higher sensitivity
-        self.iso_weight = 0.5  # Increased isolation forest weight for better anomaly detection
+        self.threshold = 0.4  # Adjusted threshold to reduce false positives on POST requests
+        self.iso_weight = 0.4  # Balanced isolation forest weight
 
     def load_rules(self):
         self.rules = []
@@ -256,9 +256,9 @@ class RuleEngine:
                     self.vectorizer = package.get('vectorizer')
                     self.preprocessor = package.get('preprocessor')
                     self.feature_names = package.get('feature_names', [])
-                    # Override threshold and weight with more sensitive values
-                    self.threshold = 0.3  # Lowered threshold for better detection
-                    self.iso_weight = 0.5  # Increased weight for anomaly detection
+                    # Override threshold and weight with balanced values
+                    self.threshold = 0.4  # Adjusted threshold to reduce false positives on POST requests
+                    self.iso_weight = 0.4  # Balanced isolation forest weight
                     
                     # Store the code and prediction function for direct execution
                     self.standalone_code = package.get('code', '')
@@ -326,9 +326,9 @@ class RuleEngine:
                 self.preprocessor = package.get('preprocessor')
                 self.feature_names = package.get('feature_names', [])
                 self.onehot_encoder = package.get('onehot_encoder')
-                # Override threshold and weight with more sensitive values
-                self.threshold = 0.3  # Lowered threshold for better detection
-                self.iso_weight = 0.5  # Increased weight for anomaly detection
+                # Override threshold and weight with balanced values
+                self.threshold = 0.4  # Adjusted threshold to reduce false positives on POST requests
+                self.iso_weight = 0.4  # Balanced isolation forest weight
                 
                 logger.info("Complete model package loaded successfully")
                 self.model_loaded = True
@@ -878,9 +878,9 @@ class RuleEngine:
                     # Use advanced anomaly-boosted prediction
                     logger.debug("Using anomaly-boosted prediction")
                     
-                    # Use lower threshold for better sensitivity
-                    threshold = getattr(self, 'threshold', 0.3)
-                    iso_weight = getattr(self, 'iso_weight', 0.5)  # Increased isolation forest weight
+                    # Use balanced threshold to reduce false positives
+                    threshold = getattr(self, 'threshold', 0.4)
+                    iso_weight = getattr(self, 'iso_weight', 0.4)  # Balanced isolation forest weight
                     
                     # Get anomaly-boosted prediction
                     _, attack_probabilities = anomaly_boosted_predict(
@@ -936,16 +936,15 @@ class RuleEngine:
                     attack_probability = prediction_proba[0][1]
 
                     # Determine threshold based on request properties
-                    # Always use a lower threshold for higher sensitivity
-                    # This ensures we catch more potential attacks, even with minor indicators
-                    threshold = 0.3
+                    # Use a balanced threshold that reduces false positives on POST requests
+                    threshold = 0.4
                     
-                    # Further lower threshold if request has suspicious indicators
+                    # Only lower threshold for truly suspicious indicators
                     has_query = X['has_query'].iloc[0] == 1
                     has_suspicious_content = (X['has_sql_keywords'].iloc[0] == 1 or
                                             X['has_script_tags'].iloc[0] == 1)
                     if has_query and has_suspicious_content:
-                        threshold = 0.2  # Even lower threshold for highly suspicious requests
+                        threshold = 0.3  # Lower threshold but not as aggressive as before
 
                     logger.debug(f"Prediction probability (fallback): {attack_probability:.4f}, threshold: {threshold}")
                     return attack_probability > threshold, attack_probability
