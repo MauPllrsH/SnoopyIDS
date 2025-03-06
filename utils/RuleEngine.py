@@ -108,14 +108,14 @@ DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|steal\.php|attack\.co|hacker|malw
 # Enhanced to detect XXE, Deserialization and JWT attack patterns
 FORMAT_STRING_PATTERN = re.compile(r'\%s.*\%n|\%p.*\%n|\%x.*\%n|\%d.*\%n|bash\s+-i|\/bin\/sh\s+-i|\/bin\/bash\s+-i|nc\s+\-e', re.IGNORECASE)
 
-# New patterns for weakness categories - Enhanced for better detection
-XXE_PATTERN = re.compile(r'<!DOCTYPE.*SYSTEM|<!ENTITY.*SYSTEM|<!ENTITY.*%|<\?xml.*version.*encoding|<\?xml.*version.*standalone|file:|http:|ftp:|php:|jar:|gopher:|expect:|<!ATTLIST|<xi:include|xmlns:xi=|xinclude|XPointer|external-general-entity|external-parameter-entity|dtd|SYSTEM|PUBLIC|ENTITY', re.IGNORECASE)
+# New patterns for weakness categories
+XXE_PATTERN = re.compile(r'<!DOCTYPE.*SYSTEM|<!ENTITY.*SYSTEM|file:|http:|ftp:|php:|jar:|gopher:|expect:', re.IGNORECASE)
 
-DESER_PATTERN = re.compile(r'O:[0-9]+:"[^"]+"|\bjava\.io\b|\bObjectInputStream\b|\bdeserialize\b|\bunserialize\b|\bReadObject\b|\bwriteObject\b|\bPyYAML\b|\bYAMLLoader\b|\bpickle\b|\bMarshaller\b|\bjson.loads\b|\bjsonpickle\b|\bPHPObject\b|\bSerializable\b|\bobject_hook\b|\byaml.load\b|\byaml.unsafe_load\b|\bInvoke-Expression\b|\bGadgetChain\b|\bCommandObject\b|\bSerializationBinder\b|\bTypeNameHandling\b|\bJacksonPolymorphic\b|\bObjectMapper.enableDefaultTyping\b', re.IGNORECASE)
+DESER_PATTERN = re.compile(r'O:[0-9]+:"[^"]+"|\bjava\.io\b|\bObjectInputStream\b|\bdeserialize\b|\bunserialize\b|\bReadObject\b|\bwriteObject\b|\bPyYAML\b|\bYAMLLoader\b|\bpickle\b', re.IGNORECASE)
 
-JWT_PATTERN = re.compile(r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*|alg.{1,10}none|"alg"\s*:\s*"none"|"kid"\s*:|\{"typ"\s*:\s*"JWT"|HS256|RS256|exp|nbf|iat|role|admin|true|false|"sub"|"iss"|"jti"|"aud"|"[a-zA-Z0-9_-]{2,}\.|\{.*"typ"\s*:\s*"JWT"|"signature":null|"signature":\s*""|"signature":\s*false|\\"alg\\"\\s*:\\s*\\"none\\"', re.IGNORECASE)
+JWT_PATTERN = re.compile(r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*|alg.{1,10}none|"alg"\s*:\s*"none"', re.IGNORECASE)
 
-FILE_UPLOAD_PATTERN = re.compile(r'\.php$|\.phtml$|\.php[3-8]$|\.pht$|\.phar$|\.inc$|\.aspx$|\.asp$|\.jsp$|\.jspx$|\.cgi$|\.pl$|\.py$|\.rb$|\.sh$|Content-Type:\s*application|multipart/form-data|content-disposition:\s*form-data|filename=|\.\.\\.|\.php\x00|\.asp\x00|image\/php|text\/php|application\/x-httpd-php|x-php|\\\\.php|\\\\.asp|null byte|double extension|magic bytes', re.IGNORECASE)
+FILE_UPLOAD_PATTERN = re.compile(r'\.php$|\.aspx$|\.jsp$|\.phar$|\.cgi$|Content-Type: application|multipart/form-data|content-disposition:\s*form-data|filename=', re.IGNORECASE)
 
 
 class RuleEngine:
@@ -323,182 +323,28 @@ class RuleEngine:
             logger.warning(f"DETECTED: NoSQL injection pattern in body")
             return "NOSQL_INJECTION_DETECTED"
             
-        # Enhanced XXE detection with pattern entity and XInclude attack detection
+        # Check for XXE patterns
         if XXE_PATTERN.search(body_str):
             logger.warning(f"DETECTED: XXE attack pattern in body")
             return "XXE_ATTACK_DETECTED"
             
-        # Look for specific XXE attack patterns that might be obfuscated
-        # Check for parameter entity XXE attacks (often missed by basic patterns)
-        if re.search(r'%.*ENTITY|%.*SYSTEM|%.*PUBLIC|DTD\s+\[.*%', body_str, re.IGNORECASE):
-            logger.warning(f"DETECTED: Parameter entity XXE attack")
-            return "PARAMETER_ENTITY_XXE_ATTACK"
-            
-        # Check for XInclude attacks (alternative to DOCTYPE)
-        if re.search(r'<xi:include|xmlns:xi=|xinclude|href\s*=\s*"(data|file|http)', body_str, re.IGNORECASE):
-            logger.warning(f"DETECTED: XInclude attack")
-            return "XINCLUDE_ATTACK"
-            
-        # Check for blind XXE techniques
-        if re.search(r'<!ENTITY.*SYSTEM.*http|<!ENTITY.*SYSTEM.*file', body_str, re.IGNORECASE):
-            logger.warning(f"DETECTED: Potential blind XXE attack")
-            return "BLIND_XXE_ATTACK"
-            
-        # Search for XXE indicators in content-type header (common in XML attacks)
-        if headers and isinstance(headers, dict):
-            content_type = ''
-            for key in headers:
-                if key.lower() == 'content-type':
-                    content_type = headers[key]
-                    break
-                    
-            if content_type and 'xml' in content_type.lower():
-                # Extra scrutiny for XML content
-                if '<!DOCTYPE' in body_str or '<!ENTITY' in body_str or 'SYSTEM' in body_str:
-                    logger.warning(f"DETECTED: XXE attack in XML content")
-                    return "XML_XXE_ATTACK"
-            
-        # Enhanced check for Deserialization attack patterns with common obfuscation techniques
+        # Check for Deserialization attack patterns
         if DESER_PATTERN.search(body_str):
             logger.warning(f"DETECTED: Deserialization attack pattern in body")
             return "DESERIALIZATION_ATTACK_DETECTED"
             
-        # Additional checks for obfuscated deserialization payloads
-        # Check for base64 encoded serialized objects (common obfuscation technique)
-        if re.search(r'(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?', body_str):
-            # Attempt to decode and check if it contains serialization patterns
-            try:
-                import base64
-                # Find potential base64 strings (at least 20 chars long)
-                for match in re.finditer(r'(?:[A-Za-z0-9+/]{4}){5,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})', body_str):
-                    try:
-                        decoded = base64.b64decode(match.group(0)).decode('utf-8', errors='ignore')
-                        # Check if decoded content contains serialization patterns
-                        if re.search(r'O:[0-9]+:|rO0|java\.|ObjectInputStream|serializ|deserializ|pickle', decoded, re.IGNORECASE):
-                            logger.warning(f"DETECTED: Base64 encoded deserialization payload")
-                            return "OBFUSCATED_DESERIALIZATION_ATTACK"
-                    except:
-                        # Ignore decoding errors and continue
-                        pass
-            except:
-                # If base64 module not available, skip this check
-                pass
-            
-        # Enhanced JWT attack detection with header analysis and algorithm verification
+        # Check for JWT attack patterns
         if JWT_PATTERN.search(body_str):
             logger.warning(f"DETECTED: JWT attack pattern in body")
             return "JWT_ATTACK_DETECTED"
-        
-        # Check for JWT tokens in Auth headers (common place for JWT attacks)
-        auth_header = ''
-        if headers and isinstance(headers, dict):
-            auth_header = headers.get('Authorization', '')
-            if not auth_header and headers:
-                # Try case-insensitive lookup
-                for key in headers:
-                    if key.lower() == 'authorization':
-                        auth_header = headers[key]
-                        break
-        
-        # Check if we have a Bearer token
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            # Check if it's a JWT token
-            if re.match(r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*', token):
-                try:
-                    # Check for common JWT attacks by examining token parts
-                    token_parts = token.split('.')
-                    if len(token_parts) >= 2:
-                        # Try to decode header
-                        import base64
-                        try:
-                            # Handle padding issues
-                            header_part = token_parts[0]
-                            padding = 4 - (len(header_part) % 4)
-                            if padding < 4:
-                                header_part += '=' * padding
-                            
-                            header_json = base64.b64decode(header_part).decode('utf-8')
-                            
-                            # Check for alg:none attack
-                            if '"alg"' in header_json and ('"none"' in header_json.lower() or 'null' in header_json.lower()):
-                                logger.warning(f"DETECTED: JWT alg=none attack in Authorization header")
-                                return "JWT_ALG_NONE_ATTACK"
-                                
-                            # Check for signature bypass indicators
-                            if len(token_parts) == 3 and (not token_parts[2] or token_parts[2] == ''):
-                                logger.warning(f"DETECTED: JWT empty signature in Authorization header")
-                                return "JWT_SIGNATURE_BYPASS_ATTACK"
-                            
-                            # Get payload to check for role tampering
-                            try:
-                                payload_part = token_parts[1]
-                                padding = 4 - (len(payload_part) % 4)
-                                if padding < 4:
-                                    payload_part += '=' * padding
-                                
-                                payload_json = base64.b64decode(payload_part).decode('utf-8')
-                                
-                                # Check for role manipulation
-                                if ('"role"' in payload_json and ('"admin"' in payload_json or '"administrator"' in payload_json)) or \
-                                   ('"isAdmin"' in payload_json and 'true' in payload_json):
-                                    logger.warning(f"DETECTED: Potential JWT role manipulation in Authorization header")
-                                    return "JWT_ROLE_TAMPERING_ATTACK"
-                                    
-                                # Check for expiration bypass
-                                if '"exp"' in payload_json:
-                                    # Look for suspicious timestamp values
-                                    import re
-                                    exp_value = re.search(r'"exp"\s*:\s*(\d+)', payload_json)
-                                    if exp_value:
-                                        exp_timestamp = int(exp_value.group(1))
-                                        # Check for far-future timestamps (10+ years)
-                                        if exp_timestamp > 1893456000:  # 2030-01-01
-                                            logger.warning(f"DETECTED: JWT expiration bypass (far-future timestamp)")
-                                            return "JWT_EXPIRATION_BYPASS_ATTACK"
-                            except:
-                                # Ignore payload parsing errors
-                                pass
-                        except:
-                            # Ignore header parsing errors
-                            pass
-                except:
-                    # Ignore errors in JWT analysis
-                    pass
             
-        # Check for File Upload attack patterns with improved detection for POST requests
-        if FILE_UPLOAD_PATTERN.search(body_str):
+        # Check for File Upload attack patterns - careful with false positives in POST
+        if not is_post and FILE_UPLOAD_PATTERN.search(body_str):
             logger.warning(f"DETECTED: Suspicious file upload pattern in body")
             return "SUSPICIOUS_FILE_UPLOAD_DETECTED"
-        
-        # Additional file upload checks specific to multipart form data (common in POST requests)
-        if 'content-type' in str(headers).lower() and 'multipart/form-data' in str(headers).lower():
-            # Check for malicious extensions in filename
-            if 'filename=' in body_str:
-                dangerous_extensions = ['.php', '.phtml', '.php3', '.php4', '.php5', '.pht', '.phar', 
-                                       '.asp', '.aspx', '.jsp', '.jspx', '.cgi', '.pl', '.py', '.rb', '.sh']
-                if any(ext in body_str for ext in dangerous_extensions):
-                    logger.warning(f"DETECTED: Malicious file extension in upload")
-                    return "MALICIOUS_FILE_UPLOAD_DETECTED"
-                
-                # Check for MIME type spoofing (content type doesn't match extension)
-                if ('content-type: image/' in body_str.lower() and 
-                    any(ext in body_str for ext in ['.php', '.asp', '.jsp', '.cgi'])):
-                    logger.warning(f"DETECTED: MIME type spoofing in file upload")
-                    return "MIME_TYPE_SPOOFING_DETECTED"
-                
-                # Check for null byte injection
-                if '%00' in body_str or '\\x00' in body_str:
-                    logger.warning(f"DETECTED: Null byte injection in file upload")
-                    return "NULL_BYTE_INJECTION_DETECTED"
-                
-                # Check for double extension (e.g., file.jpg.php)
-                image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg']
-                for img_ext in image_exts:
-                    for danger_ext in dangerous_extensions:
-                        if f"{img_ext}{danger_ext}" in body_str.lower():
-                            logger.warning(f"DETECTED: Double extension in file upload")
-                            return "DOUBLE_EXTENSION_ATTACK_DETECTED"
+        elif is_post and 'filename=' in body_str and ('.php' in body_str or '.jsp' in body_str or '.asp' in body_str):
+            logger.warning(f"DETECTED: Malicious file upload attempt")
+            return "MALICIOUS_FILE_UPLOAD_DETECTED"
         
         # Direct check for a href tags - phishing commonly uses these
         # For POST requests, only detect phishing attempts with stronger indicators
