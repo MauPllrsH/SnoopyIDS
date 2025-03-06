@@ -1,12 +1,12 @@
 import numpy as np
 
-def anomaly_boosted_predict(model, X, iso_model, threshold=0.3, iso_weight=0.5):
+def anomaly_boosted_predict(model, X, iso_model, threshold=0.55, iso_weight=0.3):
     """
     Boost model predictions with anomaly detection scores
     - model: main classifier (voting ensemble)
     - X: feature matrix
     - iso_model: isolation forest model
-    - threshold: base decision threshold (lower = more sensitive)
+    - threshold: base decision threshold (higher = less sensitive)
     - iso_weight: weight to give to anomaly scores (0-1, higher = more aggressive detection)
     """
     # Get base model prediction probabilities

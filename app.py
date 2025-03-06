@@ -260,7 +260,15 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                             if actual_model:
                                 probs = actual_model.predict_proba(features)
                                 confidence = probs[0][1] if len(probs[0]) > 1 else probs[0][0]
-                                threshold = getattr(self.rule_engine, 'threshold', 0.5)
+                                # Get base threshold from rule engine
+                                base_threshold = getattr(self.rule_engine, 'threshold', 0.55)
+                                
+                                # Apply higher threshold for POST requests
+                                method = data.get('method', '')
+                                threshold = base_threshold
+                                if method == 'POST':
+                                    threshold = 0.65  # Much higher threshold for POST requests
+                                
                                 is_attack = confidence > threshold
                                 logger.info(
                                     f"Emergency prediction successful: {is_attack} (confidence: {confidence:.4f})")

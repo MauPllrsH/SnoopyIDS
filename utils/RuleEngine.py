@@ -121,8 +121,8 @@ class RuleEngine:
         self.predict_function = None
         self.feature_names = []
         self.iso_model = None
-        self.threshold = 0.4  # Adjusted threshold to reduce false positives on POST requests
-        self.iso_weight = 0.4  # Balanced isolation forest weight
+        self.threshold = 0.55  # Increased threshold to reduce false positives on POST requests
+        self.iso_weight = 0.3  # Reduced isolation forest weight to be less aggressive
 
     def load_rules(self):
         self.rules = []
@@ -257,8 +257,8 @@ class RuleEngine:
                     self.preprocessor = package.get('preprocessor')
                     self.feature_names = package.get('feature_names', [])
                     # Override threshold and weight with balanced values
-                    self.threshold = 0.4  # Adjusted threshold to reduce false positives on POST requests
-                    self.iso_weight = 0.4  # Balanced isolation forest weight
+                    self.threshold = 0.55  # Increased threshold to reduce false positives on POST requests
+                    self.iso_weight = 0.3  # Reduced isolation forest weight to be less aggressive
                     
                     # Store the code and prediction function for direct execution
                     self.standalone_code = package.get('code', '')
@@ -327,8 +327,8 @@ class RuleEngine:
                 self.feature_names = package.get('feature_names', [])
                 self.onehot_encoder = package.get('onehot_encoder')
                 # Override threshold and weight with balanced values
-                self.threshold = 0.4  # Adjusted threshold to reduce false positives on POST requests
-                self.iso_weight = 0.4  # Balanced isolation forest weight
+                self.threshold = 0.55  # Increased threshold to reduce false positives on POST requests
+                self.iso_weight = 0.3  # Reduced isolation forest weight to be less aggressive
                 
                 logger.info("Complete model package loaded successfully")
                 self.model_loaded = True
