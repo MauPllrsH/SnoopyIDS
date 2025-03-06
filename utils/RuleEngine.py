@@ -92,7 +92,10 @@ except ImportError:
         return features
 
 # Pre-compile regex patterns with improvements to detect current weakness categories
-SQL_PATTERN = re.compile(r'select.*from|union.*select|insert.*into|update.*set|delete.*from|drop.*table|exec.*xp_|execute.*sp_|system.*\(|alter.*table|cast.*\(|declare.*@|create.*table|\b1=1\b|--.*$|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+', re.IGNORECASE)
+# DEBUG: Display the SQL pattern we're using
+SQL_PATTERN_STR = r'select.*from|union.*select|insert.*into|update.*set|delete.*from|drop.*table|exec.*xp_|execute.*sp_|system.*\(|alter.*table|cast.*\(|declare.*@|create.*table|\b1=1\b|--.*$|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+|[\'\"].*or.*1.*=.*1|[\'\"].*OR.*1.*=.*1'
+logger.warning(f"DEBUG: Using SQL_PATTERN: {SQL_PATTERN_STR}")
+SQL_PATTERN = re.compile(SQL_PATTERN_STR, re.IGNORECASE)
 
 # Enhanced to detect NoSQL Injection patterns
 NOSQL_PATTERN = re.compile(r'\$ne|\$gt|\$lt|\$in|\$nin|\$exists|\$regex|\$where|{\s*\$.+}|\[\s*\$.+\]|new\s+date|this\.|function\s*\(|mongodb|findOne|updateOne|deleteOne|aggregate', re.IGNORECASE)
@@ -175,6 +178,9 @@ class RuleEngine:
                 import json
                 json_data = json.loads(body)
                 
+                # DEBUG: Print the parsed JSON data
+                logger.warning(f"DEBUG: Parsed JSON data: {json_data}")
+                
                 # Recursively check all string values in JSON for SQL and NoSQL injection
                 def check_json_for_sql(obj):
                     if isinstance(obj, dict):
@@ -185,13 +191,30 @@ class RuleEngine:
                                 return "NOSQL_INJECTION_IN_JSON"
                             
                             if isinstance(value, str):
+                                # DEBUG: For each string field, show the pattern matching
+                                logger.warning(f"DEBUG: Checking JSON field '{key}' with value: '{value}'")
+                                
+                                # Check SQL pattern match
+                                sql_match = SQL_PATTERN.search(value)
+                                if sql_match:
+                                    logger.warning(f"DEBUG: SQL_PATTERN match found: {sql_match.group(0)}")
+                                else:
+                                    logger.warning(f"DEBUG: No SQL_PATTERN match found")
+                                
                                 # For POST requests, we need more SQL keywords to confirm an attack
                                 if is_post:
                                     # More strict pattern matching for POST requests
                                     # Count how many SQL keywords are present
                                     sql_keywords = ['select', 'from', 'where', 'union', 'insert', 'update', 
                                                    'delete', 'drop', 'exec', 'execute', '1=1']
+                                    
+                                    # DEBUG: Check each keyword
+                                    for kw in sql_keywords:
+                                        if kw in value.lower():
+                                            logger.warning(f"DEBUG: Found SQL keyword '{kw}' in value")
+                                            
                                     keyword_count = sum(1 for kw in sql_keywords if kw in value.lower())
+                                    logger.warning(f"DEBUG: Found {keyword_count} SQL keywords in value")
                                     
                                     # Require at least 2 SQL keywords for POST requests to reduce false positives
                                     if keyword_count >= 2:
@@ -247,13 +270,34 @@ class RuleEngine:
         # Direct check for various injection patterns in the raw body
         body_str = str(body).lower()
         
+        # DEBUG: For better troubleshooting
+        logger.warning(f"DEBUG: Checking entire body string: {body_str}")
+        
         # SQL Injection check - adjust sensitivity for POST
         if is_post:
+            # Debug: Test SQL pattern match directly
+            sql_match = SQL_PATTERN.search(body_str)
+            if sql_match:
+                logger.warning(f"DEBUG: SQL_PATTERN match in full body: {sql_match.group(0)}")
+            else:
+                logger.warning(f"DEBUG: No SQL_PATTERN match in full body")
+                
+            # Try specific pattern for SQL auth bypass directly
+            if "' or 1=1" in body_str or "\" or 1=1" in body_str:
+                logger.warning(f"DEBUG: Direct match for SQL auth bypass pattern")
+            
             # For POST, use a more restrictive detection approach
             # Count occurrences of SQL keywords to determine if it's an actual attack
             sql_keywords = ['select', 'from', 'where', 'union', 'insert', 'update', 
-                           'delete', 'drop', 'exec', 'execute', '1=1']
+                           'delete', 'drop', 'exec', 'execute', '1=1', 'or 1=1']
+            
+            # DEBUG: Check each keyword
+            for kw in sql_keywords:
+                if kw in body_str:
+                    logger.warning(f"DEBUG: Found SQL keyword '{kw}' in body")
+                    
             keyword_count = sum(1 for kw in sql_keywords if kw in body_str)
+            logger.warning(f"DEBUG: Found {keyword_count} SQL keywords in body")
             
             # Only flag as SQL injection if multiple SQL keywords are found in POST
             if keyword_count >= 2 and SQL_PATTERN.search(body_str):
