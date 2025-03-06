@@ -91,11 +91,11 @@ except ImportError:
             features = features.iloc[:, :expected_count]
         return features
 
-# Pre-compile regex patterns for better performance
-SQL_PATTERN = re.compile(r'select|from|where|union|insert|update|delete|drop|exec|execute|system|alter|cast|declare|create|xp_|\b1=1\b|--|\'|\"|\\|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+', re.IGNORECASE)
-SCRIPT_PATTERN = re.compile(r'<script|javascript:|data:|alert\(|eval\(|setTimeout|setInterval|<alert|<alart|<a\s+href|<img|<iframe|<svg|on\w+=|onerror|onclick|onload|document\.|\.cookie|\.innerhtml|fromcharcode|\\x[0-9a-f]{2}|&#x[0-9a-f]{2}|phishing|steal|hack|\.(php|jsp|aspx|sh|exe|bat)|\/\*|attack|hack', re.IGNORECASE)
-DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|steal\.php|attack\.co|hacker|malware|phishing|file://|http://|https://|ftp://|\/etc\/|\/var\/|\/root\/|\.\.\/|\.\.%2f|%2e%2e|%252e%252e|\%[0-9a-fA-F]{2}', re.IGNORECASE)
-FORMAT_STRING_PATTERN = re.compile(r'\%[0-9]*[xsdfo]|\%n|\%p|\%x|\%d|bash -i|\/bin\/sh|\/bin\/bash|nc\s+\-e', re.IGNORECASE)
+# Pre-compile regex patterns with adjustments for common false positives in login requests
+SQL_PATTERN = re.compile(r'select.*from|union.*select|insert.*into|update.*set|delete.*from|drop.*table|exec.*xp_|execute.*sp_|system.*\(|alter.*table|cast.*\(|declare.*@|create.*table|\b1=1\b|--.*$|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+', re.IGNORECASE)
+SCRIPT_PATTERN = re.compile(r'<script|javascript:|data:text\/html|alert\s*\(|eval\s*\(|setTimeout\s*\(|setInterval\s*\(|<iframe|<svg|on\w+\s*=\s*["\']|onerror\s*=|onclick\s*=|onload\s*=|document\.cookie|\.innerhtml|fromcharcode|\\x[0-9a-f]{2}|&#x[0-9a-f]{2}|phishing|steal|hack|\.(php|jsp|aspx|sh|exe|bat)|\/\*', re.IGNORECASE)
+DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|steal\.php|attack\.co|hacker|malware|file://|\/etc\/passwd|\/var\/www|\/root\/|\.\.\/\.\.\/|\.\.%2f\.\.%2f|%2e%2e%2f|%252e%252e%2f', re.IGNORECASE)
+FORMAT_STRING_PATTERN = re.compile(r'\%s.*\%n|\%p.*\%n|\%x.*\%n|\%d.*\%n|bash\s+-i|\/bin\/sh\s+-i|\/bin\/bash\s+-i|nc\s+\-e', re.IGNORECASE)
 
 
 class RuleEngine:
@@ -135,15 +135,21 @@ class RuleEngine:
             ))
 
     def check_rules(self, data):
-        """Check if the request matches any rules, with debug logging"""
+        """Check if the request matches any rules, with debug logging and POST request special handling"""
         # Simple content-based checks before formal rule checking
         body = data.get('body', '')
         path = data.get('path', '')
         query = data.get('query', '')
         headers = data.get('headers', {})
+        method = data.get('method', '')
+        
+        # POST request sensitivity adjustment - implement higher confidence requirements
+        # to prevent false positives on login forms
+        is_post = method == 'POST'
         
         # Log check for debugging
         logger.warning("==== QUICK CONTENT CHECK ====")
+        logger.warning(f"Method: {method}, Path: {path}")
         
         # Check for SQL Injection in JSON values
         if body and isinstance(body, str) and (body.startswith('{') or body.startswith('[')):
@@ -157,7 +163,19 @@ class RuleEngine:
                     if isinstance(obj, dict):
                         for key, value in obj.items():
                             if isinstance(value, str):
-                                if SQL_PATTERN.search(value):
+                                # For POST requests, we need more SQL keywords to confirm an attack
+                                if is_post:
+                                    # More strict pattern matching for POST requests
+                                    # Count how many SQL keywords are present
+                                    sql_keywords = ['select', 'from', 'where', 'union', 'insert', 'update', 
+                                                   'delete', 'drop', 'exec', 'execute', '1=1']
+                                    keyword_count = sum(1 for kw in sql_keywords if kw in value.lower())
+                                    
+                                    # Require at least 2 SQL keywords for POST requests to reduce false positives
+                                    if keyword_count >= 2:
+                                        logger.warning(f"DETECTED: SQL injection in JSON field '{key}': {value}")
+                                        return True
+                                elif SQL_PATTERN.search(value):
                                     logger.warning(f"DETECTED: SQL injection in JSON field '{key}': {value}")
                                     return True
                             elif check_json_for_sql(value):
@@ -174,14 +192,26 @@ class RuleEngine:
                 # Not valid JSON, continue with normal checks
                 pass
                 
-        # Direct check for SQL keywords in the raw body
-        if SQL_PATTERN.search(str(body)):
+        # Direct check for SQL keywords in the raw body - adjust sensitivity for POST
+        if is_post:
+            # For POST, use a more restrictive detection approach
+            # Count occurrences of SQL keywords to determine if it's an actual attack
+            sql_keywords = ['select', 'from', 'where', 'union', 'insert', 'update', 
+                           'delete', 'drop', 'exec', 'execute', '1=1']
+            keyword_count = sum(1 for kw in sql_keywords if kw in str(body).lower())
+            
+            # Only flag as SQL injection if multiple SQL keywords are found in POST
+            if keyword_count >= 2 and SQL_PATTERN.search(str(body)):
+                logger.warning(f"DETECTED: Multiple SQL patterns in POST body")
+                return "SQL_INJECTION_DETECTED"
+        elif SQL_PATTERN.search(str(body)):
             logger.warning(f"DETECTED: SQL injection pattern in body")
             return "SQL_INJECTION_DETECTED"
         
         # Direct check for a href tags - phishing commonly uses these
+        # For POST requests, only detect phishing attempts with stronger indicators
         href_check = '<a href' in str(body).lower() or '<a href' in str(query).lower()
-        if href_check:
+        if href_check and (not is_post or ('<a href' in str(body).lower() and ('http:' in str(body).lower() or 'https:' in str(body).lower()))):
             logger.warning("DETECTED: <a href> tag found - possible phishing attempt")
             return "PHISHING_LINK_DETECTED"
             
@@ -192,9 +222,21 @@ class RuleEngine:
                 logger.warning(f"DETECTED: Malicious domain/keyword '{domain}' found")
                 return "MALICIOUS_DOMAIN_DETECTED"
                 
-        # Standard rule checking
+        # Standard rule checking - for POST requests, manually verify each match is high confidence
         for rule in self.rules:
             if rule.check(data):
+                # For POST requests, apply additional confidence checks to reduce false positives
+                if is_post:
+                    # Avoid blocking login forms with common auth-related rules
+                    if 'login' in rule.name.lower() or 'auth' in rule.name.lower():
+                        logger.info(f"Ignoring auth-related rule match for POST request: {rule.name}")
+                        continue
+                        
+                    # Skip low-confidence matches for POST requests
+                    if rule.severity.lower() == 'low':
+                        logger.info(f"Ignoring low-severity rule match for POST request: {rule.name}")
+                        continue
+                
                 logger.warning(f"RULE MATCHED: {rule.name} (pattern: {rule.pattern} on field: {rule.field})")
                 return rule.name
                 
