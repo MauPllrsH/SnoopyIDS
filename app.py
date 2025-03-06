@@ -66,7 +66,6 @@ except Exception as e:
     log_exception(e)
     raise e
 
-
 class IDSServicer(waf_pb2_grpc.WAFServicer):
     def __init__(self):
         try:
@@ -79,10 +78,10 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             # Create mongo_url without logging the credentials
             mongo_url = f"mongodb://{mongo_user}:****@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
             logger.info(f"Connecting to MongoDB at: {mongo_url.replace(mongo_user, '****')}")
-            
+
             # Create the actual connection URL (not logged)
             actual_mongo_url = f"mongodb://{mongo_user}:{mongo_password}@mongodb:{mongo_port}/{mongo_database}?authSource=admin"
-            
+
             # Set up MongoDB with connection pooling and timeouts
             self.mongo_client = MongoClient(
                 actual_mongo_url,
@@ -105,12 +104,36 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             else:
                 logger.info("Logs collection already exists")
 
+            # Create config collection if it doesn't exist
+            if 'config' not in collections:
+                logger.info("Creating config collection...")
+                self.db.create_collection('config')
+                logger.info("Config collection created")
+
+                # Initialize prevention mode setting (default to disabled)
+                self.db.config.insert_one({
+                    'key': 'prevention_mode',
+                    'enabled': False
+                })
+                logger.info("Prevention mode initialized to disabled")
+            else:
+                # Make sure prevention_mode config exists
+                config = self.db.config.find_one({'key': 'prevention_mode'})
+                if not config:
+                    self.db.config.insert_one({
+                        'key': 'prevention_mode',
+                        'enabled': False
+                    })
+                    logger.info("Prevention mode config created (default: disabled)")
+                else:
+                    logger.info(f"Prevention mode config exists: {config['enabled']}")
+
             # Initialize RuleEngine (use same credentials but don't pass them directly)
             logger.info("Initializing RuleEngine...")
             self.rule_engine = RuleEngine(actual_mongo_url, mongo_database, 'rules')
             self.rule_engine.load_rules()
             logger.info("Rules loaded")
-            
+
             # Load ML model components with much more robust error handling
             try:
                 # First check what model files actually exist
@@ -120,7 +143,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 model_info_path = os.path.join(model_dir, 'model_info.joblib')
                 vectorizer_path = os.path.join(model_dir, 'vectorizer.joblib')
                 preprocessor_path = os.path.join(model_dir, 'preprocessor.joblib')
-                
+
                 # Log what model files exist
                 logger.info(f"Checking for model files:")
                 logger.info(f"- standalone_model.joblib: {os.path.exists(standalone_path)}")
@@ -128,7 +151,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 logger.info(f"- model_info.joblib: {os.path.exists(model_info_path)}")
                 logger.info(f"- vectorizer.joblib: {os.path.exists(vectorizer_path)}")
                 logger.info(f"- preprocessor.joblib: {os.path.exists(preprocessor_path)}")
-                
+
                 # First try standalone model (best option)
                 if os.path.exists(standalone_path):
                     logger.info(f"Loading standalone model from {standalone_path}")
@@ -140,7 +163,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                         logger.error(f"Error type: {type(e).__name__}")
                         logger.error(f"Error traceback: {traceback.format_exc()}")
                         # Continue to next option
-                
+
                 # Then try complete package
                 elif os.path.exists(complete_package_path):
                     logger.info(f"Loading complete package from {complete_package_path}")
@@ -152,7 +175,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                         logger.error(f"Error type: {type(e).__name__}")
                         logger.error(f"Error traceback: {traceback.format_exc()}")
                         # Continue to next option
-                
+
                 # Finally try individual components
                 elif os.path.exists(model_info_path) and os.path.exists(vectorizer_path):
                     logger.info("Loading individual model components")
@@ -167,29 +190,29 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                         logger.error(f"Failed to load individual components: {str(e)}")
                         logger.error(f"Error type: {type(e).__name__}")
                         logger.error(f"Error traceback: {traceback.format_exc()}")
-                
+
                 else:
                     # No model files found
                     logger.error("No model files found in the model directory")
                     logger.error("Please ensure model files are copied to the correct location")
                     # Continue execution, but model_loaded will be False
-            
+
             except Exception as ml_error:
                 logger.error(f"Failed to load any ML model: {str(ml_error)}")
                 logger.warning("System will fall back to rule-based detection only")
-                
+
             # Verify the model was loaded correctly
             if hasattr(self.rule_engine, 'model_loaded') and self.rule_engine.model_loaded:
                 logger.info("Model successfully loaded and ready for prediction")
-                
+
                 # Add the emergency prediction function to handle any feature count issues
                 def emergency_predict(data, expected_features=82):
                     """Emergency prediction function that always produces correct feature count."""
                     import numpy as np
-                    
+
                     try:
                         logger.info(f"Using emergency prediction with {expected_features} features")
-                        
+
                         # Try to use the global standard_features function first
                         try:
                             import builtins
@@ -209,37 +232,38 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                         except Exception as feat_error:
                             logger.error(f"Error creating features: {str(feat_error)}")
                             features = np.zeros((1, expected_features))
-                        
+
                         # Make prediction
                         is_attack = False
                         confidence = 0.0
-                        
+
                         # Find the actual model with predict_proba
                         def find_actual_model(model_obj, depth=0):
                             if depth > 3:  # Limit recursion depth
                                 return None
-                                
+
                             if hasattr(model_obj, 'predict_proba'):
                                 return model_obj
-                                
+
                             if isinstance(model_obj, dict):
                                 for key, value in model_obj.items():
-                                    found = find_actual_model(value, depth+1)
+                                    found = find_actual_model(value, depth + 1)
                                     if found:
                                         return found
                             return None
-                        
+
                         # Try to use the model directly
                         try:
                             # First try to find predict_proba in the model or nested dict
                             actual_model = find_actual_model(self.rule_engine.ml_model)
-                            
+
                             if actual_model:
                                 probs = actual_model.predict_proba(features)
                                 confidence = probs[0][1] if len(probs[0]) > 1 else probs[0][0]
                                 threshold = getattr(self.rule_engine, 'threshold', 0.5)
                                 is_attack = confidence > threshold
-                                logger.info(f"Emergency prediction successful: {is_attack} (confidence: {confidence:.4f})")
+                                logger.info(
+                                    f"Emergency prediction successful: {is_attack} (confidence: {confidence:.4f})")
                             else:
                                 # If no model with predict_proba found, try simple prediction
                                 model = self.rule_engine.ml_model
@@ -252,12 +276,12 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                                     logger.error("No suitable prediction method found in model")
                         except Exception as e:
                             logger.error(f"Emergency prediction failed: {str(e)}")
-                        
+
                         return is_attack, confidence
                     except Exception as e:
                         logger.error(f"Emergency prediction function error: {str(e)}")
                         return False, 0.0
-                
+
                 # Attach the emergency prediction function to the rule engine
                 self.rule_engine.emergency_predict = emergency_predict
             else:
@@ -267,7 +291,32 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             log_exception(e)
             raise e
 
-    def store_log_entry(self, analysis_data, is_attack, message, matched_rules=None):
+    def get_prevention_mode(self):
+        """Get the current prevention mode state from the database"""
+        try:
+            config = self.db.config.find_one({'key': 'prevention_mode'})
+            if config:
+                return config['enabled']
+            return False
+        except Exception as e:
+            logger.error(f"Error getting prevention mode: {str(e)}")
+            return False
+
+    def set_prevention_mode(self, enabled):
+        """Set the prevention mode state in the database"""
+        try:
+            result = self.db.config.update_one(
+                {'key': 'prevention_mode'},
+                {'$set': {'enabled': enabled}},
+                upsert=True
+            )
+            logger.info(f"Prevention mode {'enabled' if enabled else 'disabled'}")
+            return enabled
+        except Exception as e:
+            logger.error(f"Error setting prevention mode: {str(e)}")
+            return False
+
+    def store_log_entry(self, analysis_data, is_attack, message, matched_rules=None, should_block=False):
         """Helper method to store log entries in MongoDB"""
         try:
             # Convert timestamp to Central Time
@@ -280,16 +329,16 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 else:
                     # Already a datetime object
                     timestamp_dt = analysis_data['timestamp']
-                
+
                 # Convert to Central Time
                 central_tz = pytz.timezone('US/Central')
                 if timestamp_dt.tzinfo is None:
                     # If timestamp has no timezone info, assume it's UTC
                     timestamp_dt = timestamp_dt.replace(tzinfo=timezone.utc)
-                    
+
                 # Convert to Central Time
                 central_time = timestamp_dt.astimezone(central_tz)
-                
+
                 # Format with timezone info
                 formatted_timestamp = central_time.isoformat()
                 logger.debug(f"Converted timestamp to Central Time: {formatted_timestamp}")
@@ -297,7 +346,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 logger.error(f"Error converting timestamp: {str(ts_error)}")
                 # Use original timestamp if conversion fails
                 formatted_timestamp = analysis_data['timestamp']
-            
+
             log_entry = {
                 'timestamp': formatted_timestamp,
                 'type': analysis_data['type'],
@@ -311,12 +360,13 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 'analysis_result': {
                     'injection_detected': is_attack,
                     'message': message,
-                    'matched_rules': matched_rules if matched_rules else []
+                    'matched_rules': matched_rules if matched_rules else [],
+                    'should_block': should_block
                 }
             }
             result = self.db.logs.insert_one(log_entry)
             logger.debug(f"Log entry stored with ID: {result.inserted_id}")
-                
+
         except Exception as e:
             logger.error(f"Failed to store log in MongoDB: {str(e)}")
             logger.exception("Full traceback:")
@@ -344,12 +394,16 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 'client_id': request.client_id
             }
 
+            # Check prevention mode status
+            prevention_enabled = self.get_prevention_mode()
+
             # Enhanced request logging for debugging
             logger.warning("=========== New Request Received =============")
             logger.warning(f"METHOD: {request.method}")
             logger.warning(f"PATH: {path}")
             logger.warning(f"QUERY: {query}")
-            
+            logger.warning(f"PREVENTION MODE: {'ENABLED' if prevention_enabled else 'DISABLED'}")
+
             # Log body content with careful truncation
             body_log = request.body
             if body_log and len(body_log) > 500:
@@ -362,15 +416,16 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 logger.warning(f"🚨 Attack detected (Rule: {matched_rule})")
                 logger.warning(f"Request: {request.method} {path}?{query}")
                 logger.warning(f"Body: {request.body if request.body is not None else '<empty>'}")
+                logger.warning(f"BLOCK REQUEST: {'YES' if prevention_enabled else 'NO (detection only)'}")
 
                 # Store attack log
-                self.store_log_entry(analysis_data, True, message, [matched_rule])
+                self.store_log_entry(analysis_data, True, message, [matched_rule], prevention_enabled)
 
                 return waf_pb2.ProcessResult(
                     injection_detected=True,
                     message=message,
                     matched_rules=[matched_rule],
-                    should_block=False
+                    should_block=prevention_enabled
                 )
 
             # If no rule matches, use ML analysis
@@ -390,13 +445,14 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                         except Exception as advanced_error:
                             # Log error
                             logger.error(f"Error in advanced prediction: {str(advanced_error)}")
-                            
+
                             # Try emergency prediction if available
                             if hasattr(self.rule_engine, 'emergency_predict'):
                                 try:
                                     logger.warning("Attempting emergency prediction")
                                     is_anomaly, confidence = self.rule_engine.emergency_predict(analysis_data)
-                                    logger.warning(f"Emergency prediction result: is_anomaly={is_anomaly}, confidence={confidence:.4f}")
+                                    logger.warning(
+                                        f"Emergency prediction result: is_anomaly={is_anomaly}, confidence={confidence:.4f}")
                                 except Exception as e:
                                     logger.error(f"Emergency prediction failed: {str(e)}")
                                     # Default to not an attack
@@ -414,29 +470,33 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                     is_anomaly, confidence = False, 0.0
                 if is_anomaly:
                     new_rule_name = self.rule_engine.generate_rule_from_anomaly(analysis_data)
-                    message = f"🤖 ML model detected anomaly" + (f". Generated rule: {new_rule_name}" if new_rule_name else "")
+                    message = f"🤖 ML model detected anomaly" + (
+                        f". Generated rule: {new_rule_name}" if new_rule_name else "")
 
                     logger.warning(f"\n🚨 Attack detected (ML confidence: {confidence:.2f})")
                     logger.warning(f"Request: {request.method} {path}?{query}")
                     logger.warning(f"Body: {request.body if request.body is not None else '<empty>'}")
+                    logger.warning(f"BLOCK REQUEST: {'YES' if prevention_enabled else 'NO (detection only)'}")
                     if new_rule_name:
                         logger.warning(f"Generated rule: {new_rule_name}")
 
                     # Store ML-detected attack log
-                    self.store_log_entry(analysis_data, True, message, [new_rule_name] if new_rule_name else [])
+                    self.store_log_entry(analysis_data, True, message,
+                                         [new_rule_name] if new_rule_name else [],
+                                         prevention_enabled)
 
                     return waf_pb2.ProcessResult(
                         injection_detected=True,
                         message=message,
                         matched_rules=[new_rule_name] if new_rule_name else [],
-                        should_block=False
+                        should_block=prevention_enabled
                     )
                 else:
                     message = "No anomalies detected"
                     logger.info(f"✅ {request.method} {path}")
 
                     # Store normal request log
-                    self.store_log_entry(analysis_data, False, message)
+                    self.store_log_entry(analysis_data, False, message, [], False)
 
                     return waf_pb2.ProcessResult(
                         injection_detected=False,
@@ -449,7 +509,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 logger.error(f"ML analysis error: {str(e)}")
 
                 # Store error log
-                self.store_log_entry(analysis_data, False, message)
+                self.store_log_entry(analysis_data, False, message, [], False)
 
                 return waf_pb2.ProcessResult(
                     injection_detected=False,
@@ -464,7 +524,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
 
             # Store error log if we have analysis_data
             if 'analysis_data' in locals():
-                self.store_log_entry(analysis_data, False, message)
+                self.store_log_entry(analysis_data, False, message, [], False)
 
             return waf_pb2.ProcessResult(
                 injection_detected=False,
@@ -475,13 +535,28 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
 
     def HealthCheck(self, request, context):
         return waf_pb2.HealthCheckResponse(is_healthy=True)
-        
+
     def GetPreventionMode(self, request, context):
-        return waf_pb2.PreventionModeResponse(enabled=False)
-        
+        """Get the current prevention mode status"""
+        try:
+            enabled = self.get_prevention_mode()
+            logger.info(f"Prevention mode status requested by {request.client_id}: {enabled}")
+            return waf_pb2.PreventionModeResponse(enabled=enabled)
+        except Exception as e:
+            logger.error(f"Error in GetPreventionMode: {str(e)}")
+            return waf_pb2.PreventionModeResponse(enabled=False)
+
     def SetPreventionMode(self, request, context):
-        return waf_pb2.PreventionModeResponse(enabled=False)
-    
+        """Set the prevention mode status"""
+        try:
+            enabled = request.enabled
+            result = self.set_prevention_mode(enabled)
+            logger.info(f"Prevention mode set to {enabled} by {request.client_id}")
+            return waf_pb2.PreventionModeResponse(enabled=result)
+        except Exception as e:
+            logger.error(f"Error in SetPreventionMode: {str(e)}")
+            return waf_pb2.PreventionModeResponse(enabled=False)
+
 def serve():
     try:
         logger.info("Starting server...")
