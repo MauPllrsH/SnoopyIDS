@@ -401,17 +401,6 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                 'body': request.body if request.body else '',
                 'client_id': request.client_id
             }
-            
-            # CRITICAL FIX: Special handling for login endpoints
-            # Skip all detection for login requests to fix the 403 issue
-            if path.lower().endswith('/login') and request.method == 'POST':
-                logger.info(f"🔑 Login request detected - BYPASSING DETECTION")
-                return waf_pb2.ProcessResult(
-                    injection_detected=False,
-                    message="Login request allowed",
-                    matched_rules=[],
-                    should_block=False
-                )
 
             # Check prevention mode status
             prevention_enabled = self.get_prevention_mode()
