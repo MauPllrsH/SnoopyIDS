@@ -91,11 +91,28 @@ except ImportError:
             features = features.iloc[:, :expected_count]
         return features
 
-# Pre-compile regex patterns with adjustments for common false positives in login requests
+# Pre-compile regex patterns with improvements to detect current weakness categories
 SQL_PATTERN = re.compile(r'select.*from|union.*select|insert.*into|update.*set|delete.*from|drop.*table|exec.*xp_|execute.*sp_|system.*\(|alter.*table|cast.*\(|declare.*@|create.*table|\b1=1\b|--.*$|\bor\s+\d+=\d+|\bunion\s+select|\bAND\s+\d+=\d+', re.IGNORECASE)
+
+# Enhanced to detect NoSQL Injection patterns
+NOSQL_PATTERN = re.compile(r'\$ne|\$gt|\$lt|\$in|\$nin|\$exists|\$regex|\$where|{\s*\$.+}|\[\s*\$.+\]|new\s+date|this\.|function\s*\(|mongodb|findOne|updateOne|deleteOne|aggregate', re.IGNORECASE)
+
 SCRIPT_PATTERN = re.compile(r'<script|javascript:|data:text\/html|alert\s*\(|eval\s*\(|setTimeout\s*\(|setInterval\s*\(|<iframe|<svg|on\w+\s*=\s*["\']|onerror\s*=|onclick\s*=|onload\s*=|document\.cookie|\.innerhtml|fromcharcode|\\x[0-9a-f]{2}|&#x[0-9a-f]{2}|phishing|steal|hack|\.(php|jsp|aspx|sh|exe|bat)|\/\*', re.IGNORECASE)
-DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|steal\.php|attack\.co|hacker|malware|file://|\/etc\/passwd|\/var\/www|\/root\/|\.\.\/\.\.\/|\.\.%2f\.\.%2f|%2e%2e%2f|%252e%252e%2f', re.IGNORECASE)
+
+# Enhanced pattern to include SSRF and Open Redirect targets
+DANGEROUS_URL_PATTERN = re.compile(r'evil\.com|steal\.php|attack\.co|hacker|malware|file://|\/etc\/passwd|\/var\/www|\/root\/|\.\.\/\.\.\/|\.\.%2f\.\.%2f|%2e%2e%2f|%252e%252e%2f|169\.254\.169\.254|localhost|127\.0\.0\.1', re.IGNORECASE)
+
+# Enhanced to detect XXE, Deserialization and JWT attack patterns
 FORMAT_STRING_PATTERN = re.compile(r'\%s.*\%n|\%p.*\%n|\%x.*\%n|\%d.*\%n|bash\s+-i|\/bin\/sh\s+-i|\/bin\/bash\s+-i|nc\s+\-e', re.IGNORECASE)
+
+# New patterns for weakness categories
+XXE_PATTERN = re.compile(r'<!DOCTYPE.*SYSTEM|<!ENTITY.*SYSTEM|file:|http:|ftp:|php:|jar:|gopher:|expect:', re.IGNORECASE)
+
+DESER_PATTERN = re.compile(r'O:[0-9]+:"[^"]+"|\bjava\.io\b|\bObjectInputStream\b|\bdeserialize\b|\bunserialize\b|\bReadObject\b|\bwriteObject\b|\bPyYAML\b|\bYAMLLoader\b|\bpickle\b', re.IGNORECASE)
+
+JWT_PATTERN = re.compile(r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*|alg.{1,10}none|"alg"\s*:\s*"none"', re.IGNORECASE)
+
+FILE_UPLOAD_PATTERN = re.compile(r'\.php$|\.aspx$|\.jsp$|\.phar$|\.cgi$|Content-Type: application|multipart/form-data|content-disposition:\s*form-data|filename=', re.IGNORECASE)
 
 
 class RuleEngine:
@@ -151,17 +168,22 @@ class RuleEngine:
         logger.warning("==== QUICK CONTENT CHECK ====")
         logger.warning(f"Method: {method}, Path: {path}")
         
-        # Check for SQL Injection in JSON values
+        # Check for SQL Injection and NoSQL Injection in JSON values
         if body and isinstance(body, str) and (body.startswith('{') or body.startswith('[')):
             try:
                 # Try to parse as JSON
                 import json
                 json_data = json.loads(body)
                 
-                # Recursively check all string values in JSON for SQL injection
+                # Recursively check all string values in JSON for SQL and NoSQL injection
                 def check_json_for_sql(obj):
                     if isinstance(obj, dict):
                         for key, value in obj.items():
+                            # Check for NoSQL injection patterns in keys (e.g. $where, $ne)
+                            if NOSQL_PATTERN.search(key):
+                                logger.warning(f"DETECTED: NoSQL injection in JSON key '{key}'")
+                                return "NOSQL_INJECTION_IN_JSON"
+                            
                             if isinstance(value, str):
                                 # For POST requests, we need more SQL keywords to confirm an attack
                                 if is_post:
@@ -174,39 +196,100 @@ class RuleEngine:
                                     # Require at least 2 SQL keywords for POST requests to reduce false positives
                                     if keyword_count >= 2:
                                         logger.warning(f"DETECTED: SQL injection in JSON field '{key}': {value}")
-                                        return True
+                                        return "SQL_INJECTION_IN_JSON"
                                 elif SQL_PATTERN.search(value):
                                     logger.warning(f"DETECTED: SQL injection in JSON field '{key}': {value}")
-                                    return True
-                            elif check_json_for_sql(value):
-                                return True
+                                    return "SQL_INJECTION_IN_JSON"
+                                    
+                                # Check for NoSQL injection in values
+                                if NOSQL_PATTERN.search(str(value)):
+                                    logger.warning(f"DETECTED: NoSQL injection in JSON value '{value}'")
+                                    return "NOSQL_INJECTION_IN_JSON"
+                                    
+                                # Check for XXE patterns
+                                if XXE_PATTERN.search(str(value)):
+                                    logger.warning(f"DETECTED: XXE injection in JSON value '{value}'")
+                                    return "XXE_INJECTION_IN_JSON"
+                                    
+                                # Check for deserialization attack patterns
+                                if DESER_PATTERN.search(str(value)):
+                                    logger.warning(f"DETECTED: Deserialization attack in JSON value '{value}'")
+                                    return "DESERIALIZATION_ATTACK_IN_JSON"
+                                    
+                                # Check for JWT attack patterns
+                                if JWT_PATTERN.search(str(value)):
+                                    logger.warning(f"DETECTED: JWT attack in JSON value '{value}'")
+                                    return "JWT_ATTACK_IN_JSON"
+                            elif isinstance(value, dict):
+                                # Special check for MongoDB operator objects like {$ne: null}
+                                for k in value.keys():
+                                    if NOSQL_PATTERN.search(k):
+                                        logger.warning(f"DETECTED: NoSQL operator in JSON: '{k}'")
+                                        return "NOSQL_INJECTION_IN_JSON"
+                                        
+                            result = check_json_for_sql(value)
+                            if result:
+                                return result
                     elif isinstance(obj, list):
                         for item in obj:
-                            if check_json_for_sql(item):
-                                return True
+                            result = check_json_for_sql(item)
+                            if result:
+                                return result
                     return False
                 
-                if check_json_for_sql(json_data):
-                    return "SQL_INJECTION_IN_JSON"
+                result = check_json_for_sql(json_data)
+                if result:
+                    return result
             except json.JSONDecodeError:
                 # Not valid JSON, continue with normal checks
                 pass
                 
-        # Direct check for SQL keywords in the raw body - adjust sensitivity for POST
+        # Direct check for various injection patterns in the raw body
+        body_str = str(body).lower()
+        
+        # SQL Injection check - adjust sensitivity for POST
         if is_post:
             # For POST, use a more restrictive detection approach
             # Count occurrences of SQL keywords to determine if it's an actual attack
             sql_keywords = ['select', 'from', 'where', 'union', 'insert', 'update', 
                            'delete', 'drop', 'exec', 'execute', '1=1']
-            keyword_count = sum(1 for kw in sql_keywords if kw in str(body).lower())
+            keyword_count = sum(1 for kw in sql_keywords if kw in body_str)
             
             # Only flag as SQL injection if multiple SQL keywords are found in POST
-            if keyword_count >= 2 and SQL_PATTERN.search(str(body)):
+            if keyword_count >= 2 and SQL_PATTERN.search(body_str):
                 logger.warning(f"DETECTED: Multiple SQL patterns in POST body")
                 return "SQL_INJECTION_DETECTED"
-        elif SQL_PATTERN.search(str(body)):
+        elif SQL_PATTERN.search(body_str):
             logger.warning(f"DETECTED: SQL injection pattern in body")
             return "SQL_INJECTION_DETECTED"
+        
+        # Check for NoSQL injection patterns
+        if NOSQL_PATTERN.search(body_str):
+            logger.warning(f"DETECTED: NoSQL injection pattern in body")
+            return "NOSQL_INJECTION_DETECTED"
+            
+        # Check for XXE patterns
+        if XXE_PATTERN.search(body_str):
+            logger.warning(f"DETECTED: XXE attack pattern in body")
+            return "XXE_ATTACK_DETECTED"
+            
+        # Check for Deserialization attack patterns
+        if DESER_PATTERN.search(body_str):
+            logger.warning(f"DETECTED: Deserialization attack pattern in body")
+            return "DESERIALIZATION_ATTACK_DETECTED"
+            
+        # Check for JWT attack patterns
+        if JWT_PATTERN.search(body_str):
+            logger.warning(f"DETECTED: JWT attack pattern in body")
+            return "JWT_ATTACK_DETECTED"
+            
+        # Check for File Upload attack patterns - careful with false positives in POST
+        if not is_post and FILE_UPLOAD_PATTERN.search(body_str):
+            logger.warning(f"DETECTED: Suspicious file upload pattern in body")
+            return "SUSPICIOUS_FILE_UPLOAD_DETECTED"
+        elif is_post and 'filename=' in body_str and ('.php' in body_str or '.jsp' in body_str or '.asp' in body_str):
+            logger.warning(f"DETECTED: Malicious file upload attempt")
+            return "MALICIOUS_FILE_UPLOAD_DETECTED"
         
         # Direct check for a href tags - phishing commonly uses these
         # For POST requests, only detect phishing attempts with stronger indicators
@@ -218,9 +301,28 @@ class RuleEngine:
         # Check for malicious domains and keywords
         malicious_domains = ['attack.co', 'steal.php', 'hack', 'phishing', 'malware']
         for domain in malicious_domains:
-            if domain in str(body).lower() or domain in str(path).lower() or domain in str(query).lower():
+            if domain in body_str or domain in str(path).lower() or domain in str(query).lower():
                 logger.warning(f"DETECTED: Malicious domain/keyword '{domain}' found")
                 return "MALICIOUS_DOMAIN_DETECTED"
+                
+        # Check URL path and query for SSRF attack patterns
+        ssrf_patterns = ['169.254.169.254', 'localhost', '127.0.0.1', 'internal', 'intranet', 
+                         'file://', 'gopher://', 'dict://', 'ftp://']
+        for pattern in ssrf_patterns:
+            if pattern in str(path).lower() or pattern in str(query).lower():
+                logger.warning(f"DETECTED: SSRF attack pattern: {pattern}")
+                return "SSRF_ATTACK_DETECTED"
+            
+        # Check for API abuse patterns in the URL query
+        api_abuse_patterns = [
+            'fields=*', 'include=password', 'include=credit', 'limit=1000000', 
+            'limit=-1', 'role=admin', 'override=true', 'permissions=*'
+        ]
+        
+        for pattern in api_abuse_patterns:
+            if pattern in str(query).lower():
+                logger.warning(f"DETECTED: API abuse pattern in query: {pattern}")
+                return "API_ABUSE_DETECTED"
                 
         # Standard rule checking - for POST requests, manually verify each match is high confidence
         for rule in self.rules:
@@ -233,7 +335,7 @@ class RuleEngine:
                         continue
                         
                     # Skip low-confidence matches for POST requests
-                    if rule.severity.lower() == 'low':
+                    if hasattr(rule, 'severity') and rule.severity and rule.severity.lower() == 'low':
                         logger.info(f"Ignoring low-severity rule match for POST request: {rule.name}")
                         continue
                 
