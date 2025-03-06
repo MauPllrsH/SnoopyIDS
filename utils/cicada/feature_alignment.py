@@ -1,6 +1,7 @@
+import logging
+
 import numpy as np
 from scipy.sparse import issparse
-from utils.logger_config import logger
 
 from utils.cicada.feature_extractor import extract_features
 
@@ -54,7 +55,7 @@ def extract_features_consistent(data, vectorizer, preprocessor, all_feature_name
                         onehot = transformer
                         break
             except Exception as nested_e:
-                logger.error(f"Could not extract onehot encoder: {nested_e}")
+                logging.error(f"Could not extract onehot encoder: {nested_e}")
                 raise ValueError(f"Failed to extract onehot encoder: {e}, {nested_e}")
 
     try:
@@ -74,7 +75,7 @@ def extract_features_consistent(data, vectorizer, preprocessor, all_feature_name
                 # Try transform again
                 X_cat = onehot.transform(X[categorical_columns])
             except Exception as fix_e:
-                logger.error(f"Failed to handle unknown categories: {fix_e}")
+                logging.error(f"Failed to handle unknown categories: {fix_e}")
                 raise ValueError(f"Cannot process features after attempted fix: {fix_e}")
         else:
             raise e
@@ -82,7 +83,7 @@ def extract_features_consistent(data, vectorizer, preprocessor, all_feature_name
         try:
             X_num = preprocessor.named_transformers_['num'].transform(X[numerical_columns])
         except Exception as num_e:
-            logger.error(f"Failed to transform numerical features: {num_e}")
+            logging.error(f"Failed to transform numerical features: {num_e}")
             raise ValueError(f"Cannot process numerical features: {num_e}")
 
     if issparse(X_num):
@@ -95,41 +96,10 @@ def extract_features_consistent(data, vectorizer, preprocessor, all_feature_name
     # Validate shapes before combining
     expected_features = len(all_feature_names)
     combined_features = X_num.shape[1] + X_cat.shape[1] + path_features.shape[1]
-    
-    # Add detailed logging for debugging
-    logger.info(f"Feature shapes - X_num: {X_num.shape}, X_cat: {X_cat.shape}, path_features: {path_features.shape}")
-    logger.info(f"Expected features: {expected_features}, Actually have: {combined_features}")
-    
     if combined_features != expected_features:
-        logger.warning(f"Feature count mismatch. Expected {expected_features}, got {combined_features}")
-        logger.warning(f"Numerical features: {X_num.shape[1]}, Categorical features: {X_cat.shape[1]}, TF-IDF features: {path_features.shape[1]}")
-        
-        # If we have more features than expected, truncate
-        if combined_features > expected_features:
-            # Truncate the TF-IDF features to match what's expected
-            logger.warning(f"Truncating features to match expected count")
-            extra_features = combined_features - expected_features
-            if path_features.shape[1] > extra_features:
-                path_features = path_features[:, :-extra_features]
-            
+        logging.warning(f"Feature count mismatch. Expected {expected_features}, got {combined_features}")
         # We'll continue anyway, but log the warning
-    
-    # Combine available features
+
     X_combined = np.hstack((X_num, X_cat, path_features))
-    
-    # Always ensure we have exact feature count expected by the model (default 82)
-    if X_combined.shape[1] != 82:
-        logger.warning(f"Padding/truncating features to exactly 82 (model's expected count)")
-        if X_combined.shape[1] < 82:
-            # Add padding columns
-            padding = np.zeros((X_combined.shape[0], 82 - X_combined.shape[1]))
-            X_combined = np.hstack((X_combined, padding))
-            logger.info(f"Added padding to reach 82 features, new shape: {X_combined.shape}")
-        else:
-            # Truncate excess columns
-            X_combined = X_combined[:, :82]
-            logger.info(f"Truncated to 82 features, new shape: {X_combined.shape}")
-    
-    logger.info(f"Final combined feature shape: {X_combined.shape}")
 
     return X_combined
