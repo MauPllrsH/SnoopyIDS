@@ -204,20 +204,26 @@ class RuleEngine:
                                 # For POST requests, we need more SQL keywords to confirm an attack
                                 if is_post:
                                     # More strict pattern matching for POST requests
-                                    # Count how many SQL keywords are present
+                                    # More general approach to detect various SQL injection techniques
+                                    
+                                    # Common SQL injection indicators that should be detected regardless
+                                    sql_special_chars = ["'", "\"", "--", "#", ";", "/*", "*/"]
+                                    has_sql_chars = any(char in value for char in sql_special_chars)
+                                    
+                                    # SQL operators in suspicious contexts
+                                    sql_operators = ["or", "and", "union", "=", "<", ">"]
+                                    has_operators = any(f" {op} " in f" {value.lower()} " for op in sql_operators)
+                                    
+                                    # SQL keywords
                                     sql_keywords = ['select', 'from', 'where', 'union', 'insert', 'update', 
-                                                   'delete', 'drop', 'exec', 'execute', '1=1']
+                                                   'delete', 'drop', 'exec', 'execute', 'alter', 'create']
                                     
-                                    # DEBUG: Check each keyword
-                                    for kw in sql_keywords:
-                                        if kw in value.lower():
-                                            logger.warning(f"DEBUG: Found SQL keyword '{kw}' in value")
-                                            
-                                    keyword_count = sum(1 for kw in sql_keywords if kw in value.lower())
-                                    logger.warning(f"DEBUG: Found {keyword_count} SQL keywords in value")
+                                    # Count SQL keywords
+                                    keyword_count = sum(1 for kw in sql_keywords if kw.lower() in value.lower())
                                     
-                                    # Require at least 2 SQL keywords for POST requests to reduce false positives
-                                    if keyword_count >= 2:
+                                    # Check for SQL syntax in user input 
+                                    # Either has quotes/comments AND operators OR has SQL keywords
+                                    if (has_sql_chars and has_operators) or keyword_count > 0:
                                         logger.warning(f"DETECTED: SQL injection in JSON field '{key}': {value}")
                                         return "SQL_INJECTION_IN_JSON"
                                 elif SQL_PATTERN.search(value):
@@ -286,22 +292,27 @@ class RuleEngine:
             if "' or 1=1" in body_str or "\" or 1=1" in body_str:
                 logger.warning(f"DEBUG: Direct match for SQL auth bypass pattern")
             
-            # For POST, use a more restrictive detection approach
-            # Count occurrences of SQL keywords to determine if it's an actual attack
+            # More general approach to SQL injection detection in POST bodies
+            
+            # Common SQL injection indicators that should be detected regardless
+            sql_special_chars = ["'", "\"", "--", "#", ";", "/*", "*/"]
+            has_sql_chars = any(char in body_str for char in sql_special_chars)
+            
+            # SQL operators in suspicious contexts
+            sql_operators = ["or", "and", "union", "=", "<", ">"]
+            has_operators = any(f" {op} " in f" {body_str} " for op in sql_operators)
+            
+            # SQL keywords
             sql_keywords = ['select', 'from', 'where', 'union', 'insert', 'update', 
-                           'delete', 'drop', 'exec', 'execute', '1=1', 'or 1=1']
+                          'delete', 'drop', 'exec', 'execute', 'alter', 'create']
             
-            # DEBUG: Check each keyword
-            for kw in sql_keywords:
-                if kw in body_str:
-                    logger.warning(f"DEBUG: Found SQL keyword '{kw}' in body")
-                    
-            keyword_count = sum(1 for kw in sql_keywords if kw in body_str)
-            logger.warning(f"DEBUG: Found {keyword_count} SQL keywords in body")
+            # Count SQL keywords
+            keyword_count = sum(1 for kw in sql_keywords if kw.lower() in body_str)
             
-            # Only flag as SQL injection if multiple SQL keywords are found in POST
-            if keyword_count >= 2 and SQL_PATTERN.search(body_str):
-                logger.warning(f"DETECTED: Multiple SQL patterns in POST body")
+            # Check for SQL syntax in user input 
+            # Either has special SQL chars AND operators OR has SQL keywords
+            if (has_sql_chars and has_operators) or keyword_count > 0:
+                logger.warning(f"DETECTED: SQL injection in POST body")
                 return "SQL_INJECTION_DETECTED"
         elif SQL_PATTERN.search(body_str):
             logger.warning(f"DETECTED: SQL injection pattern in body")
