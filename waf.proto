@@ -8,6 +8,12 @@ service WAF {
     // New RPC to get/set prevention mode
     rpc GetPreventionMode (PreventionModeRequest) returns (PreventionModeResponse) {}
     rpc SetPreventionMode (SetPreventionModeRequest) returns (PreventionModeResponse) {}
+    
+    // Whitelist/Graylist management
+    rpc AddToWhitelist (WhitelistRequest) returns (WhitelistResponse) {}
+    rpc RemoveFromWhitelist (WhitelistRequest) returns (WhitelistResponse) {}
+    rpc GetWhitelistedPaths (ListRequest) returns (PathListResponse) {}
+    rpc GetGraylistedPaths (ListRequest) returns (GraylistResponse) {}
 }
 
 message LogEntry {
@@ -49,4 +55,57 @@ message SetPreventionModeRequest {
 
 message PreventionModeResponse {
     bool enabled = 1;
+}
+
+// Whitelist and Graylist messages
+message WhitelistRequest {
+    string client_id = 1;
+    string method = 2;
+    string path = 3;
+    string query_pattern = 4; // Optional regex pattern
+    string body_pattern = 5;  // Optional regex pattern
+    string ip_pattern = 6;    // Optional regex pattern
+}
+
+message WhitelistResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ListRequest {
+    string client_id = 1;
+}
+
+message PathEntry {
+    string method = 1;
+    string path = 2;
+    string query_pattern = 3;
+    string body_pattern = 4;
+    string ip_pattern = 5;
+    string added_at = 6;
+    string created_by = 7;
+}
+
+message PathListResponse {
+    bool success = 1;
+    string message = 2;
+    repeated PathEntry paths = 3;
+}
+
+message GraylistEntry {
+    string method = 1;
+    string path = 2;
+    string query_pattern = 3;
+    string body_pattern = 4;
+    string ip_pattern = 5;
+    int32 count = 6;
+    string first_seen = 7;
+    string last_seen = 8;
+    int32 promotion_threshold = 9;
+}
+
+message GraylistResponse {
+    bool success = 1;
+    string message = 2;
+    repeated GraylistEntry entries = 3;
 }

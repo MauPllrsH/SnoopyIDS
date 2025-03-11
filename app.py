@@ -104,6 +104,26 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             else:
                 logger.info("Logs collection already exists")
 
+            # Create whitelist collection if it doesn't exist
+            if 'whitelist' not in collections:
+                logger.info("Creating whitelist collection...")
+                self.db.create_collection('whitelist')
+                logger.info("Whitelist collection created")
+                # Create indices for faster lookups
+                self.db.whitelist.create_index([("method", 1), ("path", 1)])
+            else:
+                logger.info("Whitelist collection already exists")
+
+            # Create graylist collection if it doesn't exist
+            if 'graylist' not in collections:
+                logger.info("Creating graylist collection...")
+                self.db.create_collection('graylist')
+                logger.info("Graylist collection created")
+                # Create indices for faster lookups
+                self.db.graylist.create_index([("method", 1), ("path", 1)])
+            else:
+                logger.info("Graylist collection already exists")
+
             # Create config collection if it doesn't exist
             if 'config' not in collections:
                 logger.info("Creating config collection...")
@@ -130,7 +150,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
 
             # Initialize RuleEngine (use same credentials but don't pass them directly)
             logger.info("Initializing RuleEngine...")
-            self.rule_engine = RuleEngine(actual_mongo_url, mongo_database, 'rules')
+            self.rule_engine = RuleEngine(actual_mongo_url, mongo_database, 'blacklist')
             self.rule_engine.load_rules()
             logger.info("Rules loaded")
 
@@ -323,6 +343,275 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
         except Exception as e:
             logger.error(f"Error setting prevention mode: {str(e)}")
             return False
+            
+    def check_whitelist(self, data):
+        """Check if a request matches any whitelist entry"""
+        try:
+            # Extract basic request information
+            method = data.get('method', '')
+            path = data.get('path', '')
+            query = data.get('query', '')
+            body = data.get('body', '')
+            ip = data.get('ip', '')
+            
+            # Log the whitelist check with appropriate detail
+            log_message = f"Checking whitelist for {method} {path}"
+            if query:
+                query_preview = query[:30] + "..." if len(query) > 30 else query
+                log_message += f" with query: {query_preview}"
+            logger.debug(log_message)
+            
+            # First check for exact method + path + query pattern match
+            whitelist_entries = list(self.db.whitelist.find({
+                "method": method,
+                "path": path,
+                "query_pattern": {"$exists": True}
+            }))
+            
+            # Check each entry that matches method and path but has a query pattern
+            for entry in whitelist_entries:
+                if entry.get('query_pattern'):
+                    import re
+                    # If the query matches the pattern
+                    if re.match(entry['query_pattern'], query):
+                        # Check additional patterns if needed
+                        is_match = True
+                        
+                        if entry.get('body_pattern') and body:
+                            if not re.match(entry['body_pattern'], body):
+                                is_match = False
+                                
+                        if entry.get('ip_pattern') and ip:
+                            if not re.match(entry['ip_pattern'], ip):
+                                is_match = False
+                                
+                        if is_match:
+                            logger.info(f"✅ Request matches whitelist with query pattern: {method} {path}")
+                            return True
+            
+            # Then check for exact method and path match without query pattern
+            # This is for entries that whitelist a path regardless of query
+            whitelist_entry = self.db.whitelist.find_one({
+                "method": method,
+                "path": path,
+                "query_pattern": {"$exists": False}
+            })
+            
+            if whitelist_entry:
+                # Check additional patterns if they exist
+                is_match = True
+                
+                if whitelist_entry.get('body_pattern') and body:
+                    import re
+                    if not re.match(whitelist_entry['body_pattern'], body):
+                        is_match = False
+                        
+                if whitelist_entry.get('ip_pattern') and ip:
+                    import re
+                    if not re.match(whitelist_entry['ip_pattern'], ip):
+                        is_match = False
+                
+                if is_match:
+                    logger.info(f"✅ Request matches whitelist (path only): {method} {path}")
+                    return True
+            
+            # Check for pattern-based whitelist entries (more expensive, only if needed)
+            # This handles cases where path has wildcards or regex patterns
+            pattern_entries = list(self.db.whitelist.find({
+                "method": method,
+                "path_pattern": {"$exists": True}
+            }))
+            
+            for entry in pattern_entries:
+                import re
+                if re.match(entry['path_pattern'], path):
+                    # Check additional patterns
+                    is_match = True
+                    
+                    if entry.get('query_pattern') and query:
+                        if not re.match(entry['query_pattern'], query):
+                            is_match = False
+                            
+                    if entry.get('body_pattern') and body:
+                        if not re.match(entry['body_pattern'], body):
+                            is_match = False
+                            
+                    if entry.get('ip_pattern') and ip:
+                        if not re.match(entry['ip_pattern'], ip):
+                            is_match = False
+                    
+                    if is_match:
+                        logger.info(f"✅ Request matches pattern whitelist: {method} {path}")
+                        return True
+            
+            # No whitelist match found
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking whitelist: {str(e)}")
+            # If there's an error, don't whitelist
+            return False
+            
+    def check_graylist(self, data):
+        """
+        Check if a request matches graylist, update count, and possibly promote to whitelist.
+        Returns: (is_in_graylist, should_block)
+        """
+        try:
+            # Extract basic request information
+            method = data.get('method', '')
+            path = data.get('path', '')
+            query = data.get('query', '')
+            body = data.get('body', '')
+            ip = data.get('ip', '')
+            
+            # Generate the same signature used in add_to_graylist
+            # This ensures consistent matching
+            signature = {
+                "method": method,
+                "path": path
+            }
+            
+            # If query exists, include it in the signature
+            if query:
+                signature["query"] = query
+            
+            # For POST requests, include body hash in signature
+            if method == "POST" and body and len(body) < 1000:
+                import hashlib
+                body_hash = hashlib.md5(body.encode()).hexdigest()
+                signature["body_hash"] = body_hash
+            
+            # Query for exact signature match
+            graylist_entry = self.db.graylist.find_one(signature)
+            
+            if graylist_entry:
+                # Update the count and last_seen timestamp
+                new_count = graylist_entry['count'] + 1
+                promotion_threshold = graylist_entry.get('promotion_threshold', 10)
+                
+                # Update graylist entry
+                from datetime import datetime, timezone
+                
+                self.db.graylist.update_one(
+                    {"_id": graylist_entry['_id']},
+                    {
+                        "$set": {"last_seen": datetime.now(timezone.utc)},
+                        "$inc": {"count": 1}
+                    }
+                )
+                
+                # Log with appropriate detail
+                log_message = f"📋 Request matches graylist ({new_count}/{promotion_threshold}): {method} {path}"
+                if "query" in signature:
+                    query_preview = signature["query"][:30] + "..." if len(signature["query"]) > 30 else signature["query"]
+                    log_message += f" with query: {query_preview}"
+                if "body_hash" in signature:
+                    log_message += f" with body hash: {signature['body_hash'][:8]}"
+                    
+                logger.info(log_message)
+                
+                # Check if we should promote to whitelist
+                if new_count >= promotion_threshold:
+                    logger.info(f"🔄 Promoting to whitelist: {method} {path}")
+                    
+                    # Create whitelist entry
+                    # We use exact matching for promoted entries
+                    whitelist_entry = {
+                        "method": graylist_entry['method'],
+                        "path": graylist_entry['path']
+                    }
+                    
+                    # If the graylist entry had a query, create a query pattern for whitelist
+                    if "query" in graylist_entry:
+                        whitelist_entry["query_pattern"] = "^" + re.escape(graylist_entry["query"]) + "$"
+                    
+                    # Add metadata
+                    whitelist_entry.update({
+                        "added_at": datetime.now(timezone.utc),
+                        "created_by": "auto-promotion",
+                        "promoted_from_graylist": True
+                    })
+                    
+                    # Add to whitelist
+                    self.db.whitelist.insert_one(whitelist_entry)
+                    
+                    # Remove from graylist
+                    self.db.graylist.delete_one({"_id": graylist_entry['_id']})
+                
+                # Return (is_in_graylist, should_block)
+                return (True, False)
+            
+            # Not in graylist with this exact signature
+            return (False, False)
+            
+        except Exception as e:
+            logger.error(f"Error checking graylist: {str(e)}")
+            # If there's an error checking graylist, don't consider it graylisted
+            return (False, False)
+    
+    def add_to_graylist(self, data, promotion_threshold=10):
+        """Add a request to the graylist for monitoring"""
+        try:
+            # Extract information for graylist entry
+            method = data.get('method', '')
+            path = data.get('path', '')
+            query = data.get('query', '')
+            body = data.get('body', '')
+            
+            # Generate a unique signature for the request
+            # This ensures that each unique combination of method/path/query/body is treated as separate
+            signature = {
+                "method": method,
+                "path": path
+            }
+            
+            # If query or body exists, include them in the signature
+            if query:
+                signature["query"] = query
+            
+            # For POST requests, we may want to include the body in the signature
+            # But we should be careful with large or changing bodies
+            if method == "POST" and body and len(body) < 1000:  # Only include reasonably sized bodies
+                import hashlib
+                # Use a hash of the body rather than the full content
+                body_hash = hashlib.md5(body.encode()).hexdigest()
+                signature["body_hash"] = body_hash
+            
+            # Check if already in graylist with this exact signature
+            existing = self.db.graylist.find_one(signature)
+            
+            if existing:
+                logger.info(f"Request already in graylist: {method} {path} with query/body")
+                return
+                
+            # Create graylist entry
+            from datetime import datetime, timezone
+            
+            graylist_entry = signature.copy()  # Start with the signature
+            
+            # Add additional fields
+            graylist_entry.update({
+                "count": 1,
+                "first_seen": datetime.now(timezone.utc),
+                "last_seen": datetime.now(timezone.utc),
+                "promotion_threshold": promotion_threshold
+            })
+            
+            # Add to graylist
+            self.db.graylist.insert_one(graylist_entry)
+            
+            # Log addition with appropriate detail
+            log_message = f"Added to graylist: {method} {path}"
+            if query:
+                log_message += f" with query: {query[:30]}..." if len(query) > 30 else f" with query: {query}"
+            if "body_hash" in graylist_entry:
+                log_message += f" with body hash: {graylist_entry['body_hash'][:8]}"
+                
+            logger.info(log_message)
+            
+        except Exception as e:
+            logger.error(f"Error adding to graylist: {str(e)}")
 
     def store_log_entry(self, analysis_data, is_attack, message, matched_rules=None, should_block=False):
         """Helper method to store log entries in MongoDB"""
@@ -381,7 +670,7 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             raise e
 
     def ProcessLog(self, request, context):
-        """Process incoming log requests with enhanced debug logging."""
+        """Process incoming log requests with whitelist/graylist functionality."""
         try:
             # Split path and query
             path = request.path
@@ -417,6 +706,27 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
             if body_log and len(body_log) > 500:
                 body_log = body_log[:500] + " ... [TRUNCATED]"
             logger.warning(f"BODY: {body_log}")
+            
+            # WHITELIST CHECK - Skip all checks if whitelisted
+            if self.check_whitelist(analysis_data):
+                message = "Request whitelisted, bypassing checks"
+                logger.info(f"⭐ WHITELISTED: {request.method} {path}")
+                
+                # Store log entry for whitelisted request
+                self.store_log_entry(analysis_data, False, message, ["WHITELISTED"], False)
+                
+                return waf_pb2.ProcessResult(
+                    injection_detected=False,
+                    message=message,
+                    matched_rules=["WHITELISTED"],
+                    should_block=False
+                )
+
+            # GRAYLIST CHECK - Track but still process
+            is_graylisted, _ = self.check_graylist(analysis_data)
+            if is_graylisted:
+                logger.info(f"📋 GRAYLISTED: {request.method} {path} (still checking)")
+            
             # Check rules first
             matched_rule = self.rule_engine.check_rules(analysis_data)
             if matched_rule:
@@ -503,6 +813,10 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
                     message = "No anomalies detected"
                     logger.info(f"✅ {request.method} {path}")
 
+                    # Add to graylist if not already tracked
+                    if not is_graylisted:
+                        self.add_to_graylist(analysis_data)
+
                     # Store normal request log
                     self.store_log_entry(analysis_data, False, message, [], False)
 
@@ -564,6 +878,161 @@ class IDSServicer(waf_pb2_grpc.WAFServicer):
         except Exception as e:
             logger.error(f"Error in SetPreventionMode: {str(e)}")
             return waf_pb2.PreventionModeResponse(enabled=False)
+            
+    def AddToWhitelist(self, request, context):
+        """Add an entry to the whitelist"""
+        try:
+            method = request.method
+            path = request.path
+            
+            # Check if already exists
+            existing = self.db.whitelist.find_one({
+                "method": method,
+                "path": path
+            })
+            
+            if existing:
+                logger.info(f"Path already in whitelist: {method} {path}")
+                return waf_pb2.WhitelistResponse(
+                    success=True,
+                    message=f"Path already in whitelist: {method} {path}"
+                )
+                
+            # Create whitelist entry
+            from datetime import datetime, timezone
+            
+            whitelist_entry = {
+                "method": method,
+                "path": path,
+                "query_pattern": request.query_pattern if request.query_pattern else None,
+                "body_pattern": request.body_pattern if request.body_pattern else None,
+                "ip_pattern": request.ip_pattern if request.ip_pattern else None,
+                "added_at": datetime.now(timezone.utc),
+                "created_by": request.client_id,
+                "promoted_from_graylist": False
+            }
+            
+            # Insert into whitelist
+            result = self.db.whitelist.insert_one(whitelist_entry)
+            logger.info(f"Added to whitelist: {method} {path} (ID: {result.inserted_id})")
+            
+            # Also remove from graylist if it exists there
+            self.db.graylist.delete_one({
+                "method": method,
+                "path": path
+            })
+            
+            return waf_pb2.WhitelistResponse(
+                success=True,
+                message=f"Successfully added to whitelist: {method} {path}"
+            )
+            
+        except Exception as e:
+            error_msg = f"Error adding to whitelist: {str(e)}"
+            logger.error(error_msg)
+            return waf_pb2.WhitelistResponse(
+                success=False,
+                message=error_msg
+            )
+            
+    def RemoveFromWhitelist(self, request, context):
+        """Remove an entry from the whitelist"""
+        try:
+            method = request.method
+            path = request.path
+            
+            # Delete from whitelist
+            result = self.db.whitelist.delete_one({
+                "method": method,
+                "path": path
+            })
+            
+            if result.deleted_count > 0:
+                logger.info(f"Removed from whitelist: {method} {path}")
+                return waf_pb2.WhitelistResponse(
+                    success=True,
+                    message=f"Successfully removed from whitelist: {method} {path}"
+                )
+            else:
+                logger.info(f"Path not found in whitelist: {method} {path}")
+                return waf_pb2.WhitelistResponse(
+                    success=False,
+                    message=f"Path not found in whitelist: {method} {path}"
+                )
+                
+        except Exception as e:
+            error_msg = f"Error removing from whitelist: {str(e)}"
+            logger.error(error_msg)
+            return waf_pb2.WhitelistResponse(
+                success=False,
+                message=error_msg
+            )
+            
+    def GetWhitelistedPaths(self, request, context):
+        """Get all whitelisted paths"""
+        try:
+            whitelist_entries = list(self.db.whitelist.find({}))
+            paths = []
+            
+            for entry in whitelist_entries:
+                paths.append(waf_pb2.PathEntry(
+                    method=entry.get('method', ''),
+                    path=entry.get('path', ''),
+                    query_pattern=entry.get('query_pattern', ''),
+                    body_pattern=entry.get('body_pattern', ''),
+                    ip_pattern=entry.get('ip_pattern', ''),
+                    added_at=str(entry.get('added_at', '')),
+                    created_by=entry.get('created_by', '')
+                ))
+                
+            return waf_pb2.PathListResponse(
+                success=True,
+                message=f"Found {len(paths)} whitelisted paths",
+                paths=paths
+            )
+            
+        except Exception as e:
+            error_msg = f"Error getting whitelisted paths: {str(e)}"
+            logger.error(error_msg)
+            return waf_pb2.PathListResponse(
+                success=False,
+                message=error_msg,
+                paths=[]
+            )
+            
+    def GetGraylistedPaths(self, request, context):
+        """Get all graylisted paths"""
+        try:
+            graylist_entries = list(self.db.graylist.find({}))
+            paths = []
+            
+            for entry in graylist_entries:
+                paths.append(waf_pb2.GraylistEntry(
+                    method=entry.get('method', ''),
+                    path=entry.get('path', ''),
+                    query_pattern=entry.get('query_pattern', ''),
+                    body_pattern=entry.get('body_pattern', ''),
+                    ip_pattern=entry.get('ip_pattern', ''),
+                    count=entry.get('count', 0),
+                    first_seen=str(entry.get('first_seen', '')),
+                    last_seen=str(entry.get('last_seen', '')),
+                    promotion_threshold=entry.get('promotion_threshold', 10)
+                ))
+                
+            return waf_pb2.GraylistResponse(
+                success=True,
+                message=f"Found {len(paths)} graylisted paths",
+                entries=paths
+            )
+            
+        except Exception as e:
+            error_msg = f"Error getting graylisted paths: {str(e)}"
+            logger.error(error_msg)
+            return waf_pb2.GraylistResponse(
+                success=False,
+                message=error_msg,
+                entries=[]
+            )
 
 def serve():
     try:
