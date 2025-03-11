@@ -249,6 +249,11 @@ class RuleEngine:
                                 if JWT_PATTERN.search(str(value)):
                                     logger.warning(f"DETECTED: JWT attack in JSON value '{value}'")
                                     return "JWT_ATTACK_IN_JSON"
+                                    
+                                # Check for XSS patterns
+                                if SCRIPT_PATTERN.search(str(value)):
+                                    logger.warning(f"DETECTED: XSS attack in JSON field '{key}': {value}")
+                                    return "XSS_ATTACK_IN_JSON"
                             elif isinstance(value, dict):
                                 # Special check for MongoDB operator objects like {$ne: null}
                                 for k in value.keys():
